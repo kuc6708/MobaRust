@@ -90,6 +90,38 @@ Pending the final validation run. See the final update below before using a
 development artifact. Earlier failed runs exposed and drove the PTY cleanup,
 fixture-isolation and synthetic-X11 corrections; they are not counted as passes.
 
+### Development validation (current Linux x64 host)
+
+- `cargo test -p mobarust-core -p mobarust-store`: core 30 + 4 and store 46 + 4
+  passed (including the new terminal-preference bounds/serde/legacy/store tests).
+- `cargo check --workspace`: passed after `cargo xtask stage-helpers`.
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`: passed.
+- Frontend: `pnpm check`, `pnpm lint`, `pnpm test:unit`, `pnpm build`: passed.
+- `cargo test -p xtask`: 21 passed; `node --test tools/release-assets.test.mjs`:
+  9 passed (including AppDir-symlink and symlinked-installer regressions).
+- `APPIMAGE_EXTRACT_AND_RUN=1 cargo xtask package-check`: exit 0.
+
+### Packaging validation (Linux x64)
+
+The checksum-scope defect is fixed: only the final regular installer files are
+copied to `target/debug/verified-installers/` and hashed into
+`SHA256SUMS.txt`; intermediate AppImage `.AppDir` symlinks are ignored and
+symlinked installer inputs are refused. Unsigned development packages assembled:
+
+- `target/debug/bundle/deb/MobaRust_0.1.31_amd64.deb` (~82.33 MiB)
+- `target/debug/bundle/rpm/MobaRust-0.1.31-1.x86_64.rpm` (~82.33 MiB)
+- `target/debug/bundle/appimage/MobaRust_0.1.31_amd64.AppImage` (~147.84 MiB)
+
+The `--version` startup benchmark passed. These packages are unsigned
+development artifacts; they were not installed over the user's app and GUI
+native-window behavior remains untested here.
+
+### Not yet run on this host
+
+Full `cargo xtask check` (SSH/OpenSSH fixtures, fuzz, helper gates), native GUI
+acceptance, Windows/macOS runners, clean-install testing, signing and
+notarization.
+
 ## Release gates
 
 CI recipes cover Windows/Linux x64 and ARM64 and both Mac architectures, using
