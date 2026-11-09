@@ -19,6 +19,11 @@
   packets in the synthetic forwarding test.
 - Patch Rust cryptographic timing/Tokio dependencies and frontend advisories;
   retain unsuppressed upstream dependency warnings as release blockers.
+- Add optional per-session terminal preferences (font size 8–32, scrollback
+  100–100000, cursor blink). Serialization stays camelCase inside the field,
+  omits unset values for legacy compatibility, and rejects unknown fields.
+- Cover preferences with native bounds, serde/legacy-JSON and store
+  round-trip/export/import tests plus frontend parser/resolver tests.
 
 These changes are development work, not a stable release. Platform runtime,
 installer, signing and independent security acceptance remain separate gates.

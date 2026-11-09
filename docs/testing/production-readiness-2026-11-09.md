@@ -38,7 +38,7 @@ Operations Deck layout are retained.
 | Host trust | Unknown/changed distinction and explicit persistence added | Direct inspection only; no SSH CA trust or automatic key replacement |
 | SFTP/SCP | Browser, recursive copy, progress/cancel, metadata/mutations implemented | Interrupted transfers restart; resume and drag/drop remain unsupported |
 | MobaXterm migration | Text SSH bookmarks added | No saved passwords, host trust, WSL shortcuts, macros, appearance or standalone tunnel import |
-| Session management | Folders, favorites, recents, search, editing, JSON backup/export | Per-session terminal appearance is not implemented |
+| Session management | Folders, favorites, recents, search, editing, JSON backup/export; optional per-session font size (8–32), scrollback (100–100000) and cursor-blink preferences | Installed 0.1.12 cannot read populated preference fields; native GUI acceptance pending |
 | Vault | Native keyring and encrypted portable vault exist | Native keychain acceptance not exercised with personal secrets |
 | UI | Existing themes, command palette, statuses, native menus retained | Comprehensive screen-reader/high-DPI and all-control review remains open |
 | X11 | Synthetic setup forwarding tested separately | Real Xvfb requires a safe existing sticky Unix socket directory |
