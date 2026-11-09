@@ -3302,3 +3302,84 @@ async fn wait_for_port(port: u16) {
     }
     panic!("local sshd did not listen on port {port}");
 }
+
+#[test]
+fn resumes_a_verified_sftp_download_prefix_and_rejects_unusable_parts() {
+    let runtime = tokio::runtime::Runtime::new().expect("create resume test runtime");
+    runtime.block_on(async {
+        let fixture = LocalSshd::start().expect("start isolated sshd fixture");
+        wait_for_port(fixture.port).await;
+        let connection = SshConnection::connect(fixture.options())
+            .await
+            .expect("connect isolated SSH");
+        let sftp = connection.open_sftp().await.expect("open isolated SFTP");
+
+        let payload: Vec<u8> = (0..200_000u32).map(|value| (value % 251) as u8).collect();
+        sftp.upload_from(payload.as_slice(), "resume.bin")
+            .await
+            .expect("upload resume fixture");
+
+        let part = fixture.directory.path().join(".resume.bin.mobarust-part");
+        std::fs::write(&part, &payload[..50_000]).expect("seed verified prefix");
+        let (_cancel_sender, mut cancel) = tokio::sync::oneshot::channel();
+        let offset = sftp
+            .prepare_download_resume("resume.bin", &part, Some(payload.len() as u64), &mut cancel)
+            .await
+            .expect("prepare verified resume");
+        assert_eq!(offset, 50_000);
+
+        let mut tail = Vec::new();
+        sftp.download_from_offset_with_cancel("resume.bin", &mut tail, offset, &mut cancel, |_| {})
+            .await
+            .expect("download remaining bytes");
+        assert_eq!(tail, payload[50_000..]);
+
+        let mut corrupt = payload[..50_000].to_vec();
+        corrupt[0] ^= 0xff;
+        std::fs::write(&part, &corrupt).expect("seed corrupt prefix");
+        let offset = sftp
+            .prepare_download_resume("resume.bin", &part, Some(payload.len() as u64), &mut cancel)
+            .await
+            .expect("reject corrupt prefix");
+        assert_eq!(offset, 0);
+        assert!(!part.exists(), "an unusable part must be removed");
+
+        std::fs::write(&part, &payload).expect("seed complete part");
+        let offset = sftp
+            .prepare_download_resume("resume.bin", &part, Some(payload.len() as u64), &mut cancel)
+            .await
+            .expect("reject complete part");
+        assert_eq!(offset, 0);
+        assert!(!part.exists());
+
+        #[cfg(unix)]
+        {
+            let target = fixture.directory.path().join("symlink-target");
+            std::fs::write(&target, b"unrelated").expect("write symlink target");
+            std::os::unix::fs::symlink(&target, &part).expect("seed symlink part");
+            let error = sftp
+                .prepare_download_resume(
+                    "resume.bin",
+                    &part,
+                    Some(payload.len() as u64),
+                    &mut cancel,
+                )
+                .await
+                .expect_err("symlinked part must be refused");
+            assert!(
+                matches!(error, SshError::Sftp(_)),
+                "a symlinked part must be refused as an SFTP error"
+            );
+            assert!(
+                std::fs::symlink_metadata(&part)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            std::fs::remove_file(&part).ok();
+        }
+
+        sftp.close().await.expect("close SFTP");
+        connection.disconnect().await.expect("disconnect");
+    });
+}

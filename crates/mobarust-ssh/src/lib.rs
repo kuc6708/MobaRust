@@ -3400,6 +3400,49 @@ impl SftpConnection {
         result.and_then(|copied| closed.map(|_| copied))
     }
 
+    /// Decide whether a retained local download part can be resumed.
+    ///
+    /// Accepts a part only when it is a regular file (not a symlink) shorter
+    /// than the remote total and its SHA-256 prefix matches the remote file's
+    /// prefix. Anything unusable is removed and `0` is returned; a symlinked
+    /// part is refused without following it.
+    pub async fn prepare_download_resume(
+        &self,
+        remote_path: &str,
+        part: &std::path::Path,
+        total: Option<u64>,
+        cancel: &mut oneshot::Receiver<()>,
+    ) -> Result<u64, SshError> {
+        match tokio::fs::symlink_metadata(part).await {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                Err(SshError::Sftp("resume part cannot be a symlink".into()))
+            }
+            Ok(metadata) if metadata.file_type().is_file() => {
+                let part_length = metadata.len();
+                if let Some(total) = total
+                    && part_length > 0
+                    && part_length < total
+                {
+                    let remote = self
+                        .hash_prefix_with_cancel(remote_path, part_length, cancel)
+                        .await?;
+                    let local = hash_local_prefix(part, part_length).await?;
+                    if remote == local {
+                        return Ok(part_length);
+                    }
+                }
+                remove_local_part(part).await?;
+                Ok(0)
+            }
+            Ok(_) => {
+                remove_local_part(part).await?;
+                Ok(0)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+            Err(error) => Err(SshError::LocalIo(error)),
+        }
+    }
+
     /// Write directly using CREATE/TRUNCATE, without rollback on failure.
     /// Native transfers use the private temporary-upload API instead.
     pub async fn upload_from<R>(
@@ -3598,6 +3641,39 @@ fn check_transfer_cancelled(cancel: &mut oneshot::Receiver<()>) -> Result<(), Ss
     match cancel.try_recv() {
         Err(oneshot::error::TryRecvError::Empty) => Ok(()),
         _ => Err(SshError::Cancelled),
+    }
+}
+
+async fn hash_local_prefix(path: &std::path::Path, length: u64) -> Result<[u8; 32], SshError> {
+    use tokio::io::AsyncReadExt;
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(SshError::LocalIo)?;
+    let mut hasher = Sha256::new();
+    let mut remaining = length;
+    let mut buffer = vec![0_u8; 64 * 1024];
+    while remaining > 0 {
+        let want = remaining.min(buffer.len() as u64) as usize;
+        let read = file
+            .read(&mut buffer[..want])
+            .await
+            .map_err(SshError::LocalIo)?;
+        if read == 0 {
+            return Err(SshError::Sftp(
+                "resume part shrank during prefix verification".into(),
+            ));
+        }
+        hasher.update(&buffer[..read]);
+        remaining -= read as u64;
+    }
+    Ok(hasher.finalize().into())
+}
+
+async fn remove_local_part(path: &std::path::Path) -> Result<(), SshError> {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SshError::LocalIo(error)),
     }
 }
 

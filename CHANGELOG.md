@@ -27,7 +27,8 @@
 - Resume interrupted SFTP downloads: retain a hidden mode-0600 part file, verify
   its SHA-256 prefix against the remote file before appending, discard it on
   cancellation or mismatch, and drive it from the transfer retry action. SCP and
-  uploads still restart from the beginning.
+  uploads still restart from the beginning. Covered by a real-SFTP fixture test
+  that resumes a verified prefix and rejects corrupt, complete and symlinked parts.
 - Add a rendered-DOM accessibility baseline (headless Chrome) and record it; the
   default Operations Deck has accessible names on all 53 buttons, image `alt`
   text, named dialogs, unique ids and `lang="en"`.
