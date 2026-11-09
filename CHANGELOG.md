@@ -24,6 +24,13 @@
   omits unset values for legacy compatibility, and rejects unknown fields.
 - Cover preferences with native bounds, serde/legacy-JSON and store
   round-trip/export/import tests plus frontend parser/resolver tests.
+- Resume interrupted SFTP downloads: retain a hidden mode-0600 part file, verify
+  its SHA-256 prefix against the remote file before appending, discard it on
+  cancellation or mismatch, and drive it from the transfer retry action. SCP and
+  uploads still restart from the beginning.
+- Add a rendered-DOM accessibility baseline (headless Chrome) and record it; the
+  default Operations Deck has accessible names on all 53 buttons, image `alt`
+  text, named dialogs, unique ids and `lang="en"`.
 - Report the local machine name and architecture from the native `app_snapshot`
   (`This Linux host`/`This PC`/`This Mac` plus x64/ARM64/Apple Silicon/Intel)
   instead of always claiming "This Mac / Apple Silicon". Covered by a frontend

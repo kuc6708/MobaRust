@@ -10,6 +10,7 @@ use mobarust_ssh::{
 };
 use mobarust_vault::{CredentialId, CredentialLookup, VaultError};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -197,6 +198,10 @@ pub struct SshTransferRequest {
     pub overwrite: bool,
     #[serde(default)]
     pub recursive: bool,
+    /// Opt-in resume of a retained SFTP download prefix (verified before use).
+    /// SCP and uploads restart from the beginning.
+    #[serde(default)]
+    pub resume: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -672,6 +677,13 @@ impl RemoteForwardJob {
     }
 }
 
+#[derive(Clone, Copy)]
+struct DownloadOptions {
+    overwrite: bool,
+    recursive: bool,
+    resume: bool,
+}
+
 struct TransferJob {
     transfer_id: String,
     terminal_id: String,
@@ -681,6 +693,7 @@ struct TransferJob {
     local_path: PathBuf,
     overwrite: bool,
     recursive: bool,
+    resume: bool,
     source: String,
     destination: String,
     created_at: Instant,
@@ -1386,6 +1399,7 @@ impl SshManager {
             local_path: local_path.clone(),
             overwrite: request.overwrite,
             recursive: request.recursive,
+            resume: request.resume,
             source: transfer_source(&direction, &remote_path, &local_path),
             destination: transfer_destination(&direction, &remote_path, &local_path),
             created_at: Instant::now(),
@@ -3171,8 +3185,11 @@ async fn run_transfer(
                 &connection,
                 &job.remote_path,
                 &job.local_path,
-                job.overwrite,
-                job.recursive,
+                DownloadOptions {
+                    overwrite: job.overwrite,
+                    recursive: job.recursive,
+                    resume: job.resume,
+                },
                 &mut cancel,
                 &mut emit_progress,
             )
@@ -3397,8 +3414,7 @@ async fn run_download<F>(
     connection: &SshConnection,
     remote_path: &str,
     destination: &Path,
-    overwrite: bool,
-    recursive: bool,
+    options: DownloadOptions,
     cancel: &mut oneshot::Receiver<()>,
     mut on_progress: F,
 ) -> Result<u64, SshError>
@@ -3409,14 +3425,14 @@ where
     let result = async {
         let (total, is_directory) = sftp.file_info(remote_path).await?;
         if is_directory {
-            if !recursive {
+            if !options.recursive {
                 return Err(SshError::RemoteDownloadSourceDirectory);
             }
             return download_directory(
                 &sftp,
                 remote_path,
                 destination,
-                overwrite,
+                options.overwrite,
                 cancel,
                 &mut on_progress,
             )
@@ -3427,9 +3443,10 @@ where
             Ok(metadata) if metadata.is_dir() => {
                 return Err(SshError::Sftp("download destination is a directory".into()));
             }
-            Ok(_) if !overwrite => {
+            Ok(_) if !options.overwrite => {
                 return Err(SshError::Sftp(
-                    "download destination already exists; enable overwrite explicitly".into(),
+                    "download destination already exists; enable options.overwrite explicitly"
+                        .into(),
                 ));
             }
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
@@ -3438,32 +3455,70 @@ where
             _ => {}
         }
 
-        let temporary = local_part_path(destination)?;
-        let mut file = create_local_download_file(&temporary).await?;
-        let copied = match sftp
-            .download_to_with_cancel(remote_path, &mut file, cancel, |bytes| {
+        let temporary = if options.resume {
+            local_resume_part_path(destination)?
+        } else {
+            local_part_path(destination)?
+        };
+        let resume_offset = if options.resume {
+            prepare_resume_offset(&sftp, remote_path, &temporary, total, cancel).await?
+        } else {
+            0
+        };
+        let mut file = if resume_offset > 0 {
+            open_resume_download_file(&temporary).await?
+        } else {
+            create_local_download_file(&temporary).await?
+        };
+        let downloaded = if resume_offset > 0 {
+            sftp.download_from_offset_with_cancel(
+                remote_path,
+                &mut file,
+                resume_offset,
+                cancel,
+                |bytes| {
+                    on_progress(bytes, total);
+                },
+            )
+            .await
+        } else {
+            sftp.download_to_with_cancel(remote_path, &mut file, cancel, |bytes| {
                 on_progress(bytes, total);
             })
             .await
-        {
-            Ok(copied) => copied,
+        };
+        let copied = match downloaded {
+            Ok(copied) => resume_offset + copied,
+            Err(SshError::Cancelled) => {
+                let _ = remove_partial_download_path(&temporary).await;
+                return Err(SshError::Cancelled);
+            }
             Err(error) => {
-                remove_partial_download(file, &temporary).await?;
+                if options.resume {
+                    // Retain the verified prefix so an explicit retry can options.resume.
+                    drop(file);
+                } else {
+                    remove_partial_download(file, &temporary).await?;
+                }
                 return Err(error);
             }
         };
         if let Err(error) = file.sync_all().await {
-            remove_partial_download(file, &temporary).await?;
+            if options.resume {
+                drop(file);
+            } else {
+                remove_partial_download(file, &temporary).await?;
+            }
             return Err(SshError::LocalIo(error));
         }
         drop(file);
-        if !overwrite && download_destination_exists(destination, &temporary).await? {
+        if !options.overwrite && download_destination_exists(destination, &temporary).await? {
             remove_partial_download_path(&temporary).await?;
             return Err(SshError::Sftp(
                 "download destination appeared during transfer".into(),
             ));
         }
-        if let Err(error) = commit_local_file(&temporary, destination, overwrite, cancel) {
+        if let Err(error) = commit_local_file(&temporary, destination, options.overwrite, cancel) {
             remove_partial_download_path(&temporary).await?;
             return Err(error);
         }
@@ -4093,6 +4148,90 @@ fn validate_local_file_path(path: &str) -> Result<PathBuf, SshManagerError> {
     Ok(PathBuf::from(path))
 }
 
+/// Deterministic, hidden part path used only for opt-in resumable downloads.
+/// It stays beside the destination and is created with mode 0600.
+fn local_resume_part_path(destination: &Path) -> Result<PathBuf, SshError> {
+    let name = destination
+        .file_name()
+        .ok_or_else(|| SshError::Sftp("download destination must include a file name".into()))?
+        .to_string_lossy();
+    Ok(destination.with_file_name(format!(".{name}.mobarust-part")))
+}
+
+/// Append to a retained resume part. The caller must have verified that the
+/// path is a regular non-symlink file with a valid verified prefix.
+async fn open_resume_download_file(temporary: &Path) -> Result<fs::File, SshError> {
+    let mut options = OpenOptions::new();
+    options.append(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    options.open(temporary).await.map_err(SshError::LocalIo)
+}
+
+async fn hash_local_prefix(path: &Path, length: u64) -> Result<[u8; 32], SshError> {
+    use tokio::io::AsyncReadExt;
+    let mut file = fs::File::open(path).await.map_err(SshError::LocalIo)?;
+    let mut hasher = Sha256::new();
+    let mut remaining = length;
+    let mut buffer = vec![0_u8; 64 * 1024];
+    while remaining > 0 {
+        let want = remaining.min(buffer.len() as u64) as usize;
+        let read = file
+            .read(&mut buffer[..want])
+            .await
+            .map_err(SshError::LocalIo)?;
+        if read == 0 {
+            return Err(SshError::Sftp(
+                "resume part shrank during prefix verification".into(),
+            ));
+        }
+        hasher.update(&buffer[..read]);
+        remaining -= read as u64;
+    }
+    Ok(hasher.finalize().into())
+}
+
+/// Decide whether a retained part can be resumed. A part is only accepted when
+/// it is a regular file shorter than the remote total and its SHA-256 prefix
+/// matches the remote prefix. Anything else is discarded and the transfer
+/// restarts from zero.
+async fn prepare_resume_offset(
+    sftp: &mobarust_ssh::SftpConnection,
+    remote_path: &str,
+    temporary: &Path,
+    total: Option<u64>,
+    cancel: &mut oneshot::Receiver<()>,
+) -> Result<u64, SshError> {
+    match fs::symlink_metadata(temporary).await {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err(SshError::Sftp("resume part cannot be a symlink".into()))
+        }
+        Ok(metadata) if metadata.file_type().is_file() => {
+            let part_length = metadata.len();
+            if let Some(total) = total
+                && part_length > 0
+                && part_length < total
+            {
+                let remote = sftp
+                    .hash_prefix_with_cancel(remote_path, part_length, cancel)
+                    .await?;
+                let local = hash_local_prefix(temporary, part_length).await?;
+                if remote == local {
+                    return Ok(part_length);
+                }
+            }
+            remove_partial_download_path(temporary).await?;
+            Ok(0)
+        }
+        Ok(_) => {
+            remove_partial_download_path(temporary).await?;
+            Ok(0)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(SshError::LocalIo(error)),
+    }
+}
+
 fn local_part_path(destination: &Path) -> Result<PathBuf, SshError> {
     let name = destination
         .file_name()
@@ -4291,8 +4430,9 @@ mod tests {
         MAX_SERVER_ALIVE_INTERVAL_SECONDS, MAX_SSH_JUMP_HOSTS, ReconnectOutcome, SshConnectRequest,
         SshManager, SshManagerError, SshTransferRequest, TRANSFER_PROGRESS_MIN_INTERVAL,
         TransferProtocol, add_transfer_size, collect_local_files, commit_local_file,
-        local_part_path, next_shell_reconnect_count, reconnect_with_backoff, remote_child_path,
-        remove_partial_download, remove_partial_download_path, server_alive_interval_duration,
+        hash_local_prefix, local_part_path, local_resume_part_path, next_shell_reconnect_count,
+        reconnect_with_backoff, remote_child_path, remove_partial_download,
+        remove_partial_download_path, server_alive_interval_duration,
         should_emit_transfer_progress, transfer_metrics, validate_local_file_path,
         validate_remote_directory_path, validate_remote_file_path, validate_remote_mutation_path,
         validate_ssh_connection_policy, validate_transfer_component, validate_tunnel_host,
@@ -4302,10 +4442,52 @@ mod tests {
         download_destination_exists, ensure_local_download_directory, local_transfer_name,
         local_upload_metadata, open_local_upload_file,
     };
+    use sha2::{Digest, Sha256};
     use std::fs;
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
     use tokio::sync::{oneshot, watch};
+
+    #[test]
+    fn resume_part_path_is_deterministic_and_hidden() {
+        let path = local_resume_part_path(std::path::Path::new("/tmp/report.log"))
+            .expect("derive resume part path");
+        assert_eq!(path, std::path::Path::new("/tmp/.report.log.mobarust-part"));
+        assert!(local_resume_part_path(std::path::Path::new("/")).is_err());
+    }
+
+    #[tokio::test]
+    async fn local_prefix_hash_covers_only_the_requested_prefix() {
+        let root = std::env::temp_dir().join(format!(
+            "mobarust-resume-hash-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        tokio::fs::create_dir_all(&root)
+            .await
+            .expect("create fixture");
+        let path = root.join("part.bin");
+        tokio::fs::write(&path, b"abcdefghij")
+            .await
+            .expect("write fixture");
+
+        let prefix = hash_local_prefix(&path, 4).await.expect("hash prefix");
+        let mut expected = Sha256::new();
+        expected.update(b"abcd");
+        let expected: [u8; 32] = expected.finalize().into();
+        assert_eq!(prefix, expected);
+
+        assert!(
+            hash_local_prefix(&path, 11).await.is_err(),
+            "a prefix longer than the file must be refused"
+        );
+        tokio::fs::remove_dir_all(&root)
+            .await
+            .expect("remove fixture");
+    }
 
     #[test]
     fn attach_replays_pending_output_before_live_output() {
@@ -5440,6 +5622,7 @@ mod tests {
                             local_path: "never-opened".into(),
                             overwrite: false,
                             recursive: false,
+                            resume: false,
                             source: "never-opened".into(),
                             destination: "never-uploaded".into(),
                             created_at: Instant::now(),
@@ -5543,6 +5726,7 @@ mod tests {
             local_path: "never-opened".into(),
             overwrite: false,
             recursive: false,
+            resume: false,
             source: "never-opened".into(),
             destination: "never-uploaded".into(),
             created_at: Instant::now(),

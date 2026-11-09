@@ -3164,7 +3164,7 @@ function App() {
     try {
       await invoke("ssh_download", {
         terminalId: remoteSessionId,
-        request: { remotePath: entry.path, localPath, protocol, overwrite, recursive: entry.isDirectory },
+        request: { remotePath: entry.path, localPath, protocol, overwrite, recursive: entry.isDirectory, resume: protocol === "sftp" && !entry.isDirectory },
       });
       setConnectionError(null);
     } catch (error) {
@@ -3273,10 +3273,14 @@ function App() {
           protocol: transfer.protocol,
           overwrite: true,
           recursive: transfer.recursive,
+          resume: transfer.direction === "download" && transfer.protocol === "sftp" && !transfer.recursive,
         },
       });
       setConnectionError(null);
-      setSessionNotice(`Retry queued for ${remotePath}.`);
+      const resumed = transfer.direction === "download" && transfer.protocol === "sftp" && !transfer.recursive;
+      setSessionNotice(resumed
+        ? `Resume attempt queued for ${remotePath}. The partial is reused only if its prefix verifies; otherwise the transfer restarts.`
+        : `Retry queued for ${remotePath}.`);
     } catch (error) {
       setConnectionError(`Transfer retry failed: ${String(error)}`);
     }

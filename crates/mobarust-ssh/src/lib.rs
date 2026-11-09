@@ -3298,6 +3298,108 @@ impl SftpConnection {
             .and_then(|bytes| check_transfer_cancelled(cancel).map(|()| bytes))
     }
 
+    /// Hash the first `length` bytes of a remote regular file. Used to verify a
+    /// retained download prefix before resuming; it never truncates or writes.
+    pub async fn hash_prefix_with_cancel(
+        &self,
+        remote_path: impl Into<String>,
+        length: u64,
+        cancel: &mut oneshot::Receiver<()>,
+    ) -> Result<[u8; 32], SshError> {
+        use tokio::io::AsyncReadExt;
+        check_transfer_cancelled(cancel)?;
+        if length == 0 {
+            return Ok([0_u8; 32]);
+        }
+        let remote_path = remote_path.into();
+        let mut file = self
+            .session
+            .open(&remote_path)
+            .await
+            .map_err(map_sftp_error)?;
+        let result = async {
+            let metadata = file.metadata().await.map_err(map_sftp_error)?;
+            if metadata.file_type() != russh_sftp::protocol::FileType::File {
+                return Err(SshError::RemoteDownloadSourceUnsupported);
+            }
+            let mut hasher = Sha256::new();
+            let mut remaining = length;
+            let mut buffer = vec![0_u8; 64 * 1024];
+            while remaining > 0 {
+                check_transfer_cancelled(cancel)?;
+                let want = remaining.min(buffer.len() as u64) as usize;
+                let read = tokio::select! {
+                    _ = &mut *cancel => return Err(SshError::Cancelled),
+                    result = self.file_io(file.read(&mut buffer[..want])) => result?,
+                };
+                if read == 0 {
+                    return Err(SshError::Sftp(
+                        "remote file shrank before the resume offset".into(),
+                    ));
+                }
+                hasher.update(&buffer[..read]);
+                remaining -= read as u64;
+            }
+            Ok(hasher.finalize().into())
+        }
+        .await;
+        let closed = self.file_io(file.close()).await;
+        result.and_then(|hash| closed.map(|_| hash))
+    }
+
+    /// Download from `offset` into an already-positioned writer. Progress is
+    /// reported as the absolute number of bytes written (offset + copied).
+    pub async fn download_from_offset_with_cancel<W, F>(
+        &self,
+        remote_path: impl Into<String>,
+        destination: &mut W,
+        offset: u64,
+        cancel: &mut oneshot::Receiver<()>,
+        mut on_progress: F,
+    ) -> Result<u64, SshError>
+    where
+        W: AsyncWrite + Unpin,
+        F: FnMut(u64),
+    {
+        use tokio::io::AsyncSeekExt;
+        check_transfer_cancelled(cancel)?;
+        let remote_path = remote_path.into();
+        if self.file_info(&remote_path).await?.1 {
+            return Err(SshError::RemoteDownloadSourceDirectory);
+        }
+        check_transfer_cancelled(cancel)?;
+        let mut file = self
+            .session
+            .open(&remote_path)
+            .await
+            .map_err(map_sftp_error)?;
+        let result = async {
+            let metadata = file.metadata().await.map_err(map_sftp_error)?;
+            if metadata.file_type() != russh_sftp::protocol::FileType::File {
+                return Err(SshError::RemoteDownloadSourceUnsupported);
+            }
+            if offset > metadata.size.unwrap_or(0) {
+                return Err(SshError::Sftp(
+                    "resume offset exceeds the remote file size".into(),
+                ));
+            }
+            self.file_io(file.seek(std::io::SeekFrom::Start(offset)))
+                .await?;
+            copy_with_cancel(
+                &mut file,
+                destination,
+                cancel,
+                |copied| on_progress(offset + copied),
+                self,
+                true,
+            )
+            .await
+        }
+        .await;
+        let closed = self.file_io(file.close()).await;
+        result.and_then(|copied| closed.map(|_| copied))
+    }
+
     /// Write directly using CREATE/TRUNCATE, without rollback on failure.
     /// Native transfers use the private temporary-upload API instead.
     pub async fn upload_from<R>(
