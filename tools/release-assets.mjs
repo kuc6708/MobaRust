@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 const config = JSON.parse(readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8'));
@@ -14,13 +14,35 @@ if (process.argv[2] === 'check-version') {
   const platform = process.argv[3];
   if (!['windows-x64', 'windows-arm64', 'linux-x64', 'linux-arm64', 'macos-arm64', 'macos-x64'].includes(platform)) throw new Error('Unknown platform');
   const helperDir = 'apps/desktop/src-tauri/helpers';
-  const helper = `mobarust-vnc-helper${platform.startsWith('windows') ? '.exe' : ''}`;
-  if (!existsSync(join(helperDir, helper)) || readdirSync(helperDir).some(name => name.includes('rdp'))) throw new Error('Invalid helper staging');
-  const extensions = platform.startsWith('windows') ? ['.exe'] : platform.startsWith('linux') ? ['.deb', '.AppImage', '.rpm'] : ['.dmg'];
-  function walk(dir) {
-    return readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)]);
+  const helperPath = join(helperDir, `mobarust-vnc-helper${platform.startsWith('windows') ? '.exe' : ''}`);
+  let helperStat;
+  try {
+    helperStat = lstatSync(helperPath);
+  } catch {
+    throw new Error('Invalid helper staging');
   }
-  const files = walk(process.argv[4] ?? 'target/release/bundle').filter(path => extensions.some(ext => path.endsWith(ext)));
+  if (!helperStat.isFile() || readdirSync(helperDir).some(name => name.includes('rdp'))) throw new Error('Invalid helper staging');
+  const extensions = platform.startsWith('windows') ? ['.exe'] : platform.startsWith('linux') ? ['.deb', '.AppImage', '.rpm'] : ['.dmg'];
+  const isInstaller = path => extensions.some(ext => path.endsWith(ext));
+  function walk(dir) {
+    const found = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      const stat = lstatSync(path);
+      if (stat.isSymbolicLink()) {
+        // Intermediate staging entries such as an AppImage `.AppDir/.DirIcon`
+        // are not deliverables. A symlinked installer, however, could redirect
+        // the collected bytes, so refuse it explicitly.
+        if (isInstaller(path)) throw new Error(`Installer must be a regular file, not a symlink: ${path}`);
+        continue;
+      }
+      if (stat.isDirectory()) found.push(...walk(path));
+      else if (stat.isFile()) found.push(path);
+      else throw new Error(`Unsupported bundle entry: ${path}`);
+    }
+    return found;
+  }
+  const files = walk(process.argv[4] ?? 'target/release/bundle').filter(isInstaller);
   if (extensions.some(ext => files.filter(path => path.endsWith(ext)).length !== 1)) {
     throw new Error(`Expected exactly one installer per format: ${extensions.join(', ')}`);
   }

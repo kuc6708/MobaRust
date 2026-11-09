@@ -1059,26 +1059,185 @@ fn verify_current_platform_bundle() -> Result<(), String> {
         let bundle = bundle_root.join("macos/MobaRust.app");
         verify_platform_package_layout(&bundle, PackagePlatform::Macos)?;
         println!("verified macOS app bundle and the shippable VNC helper resource");
-    } else {
+        let manifest_path = bundle_root.join("MobaRust.sha256");
+        write_checksum_manifest(&bundle_root, &bundle, &manifest_path)?;
+        verify_checksum_manifest(&bundle_root, &bundle, &manifest_path)?;
         println!(
-            "verified current-platform Tauri bundle directory: {}",
-            bundle_root.display()
+            "wrote and verified artifact checksum manifest: {}",
+            manifest_path.display()
         );
+        return Ok(());
     }
 
-    let artifact_root = if cfg!(target_os = "macos") {
-        bundle_root.join("macos/MobaRust.app")
-    } else {
-        bundle_root.clone()
-    };
-    let manifest_path = bundle_root.join("MobaRust.sha256");
-    write_checksum_manifest(&bundle_root, &artifact_root, &manifest_path)?;
-    verify_checksum_manifest(&bundle_root, &artifact_root, &manifest_path)?;
+    // Linux and Windows bundles contain intermediate staging trees (for example
+    // an AppImage `.AppDir` with its own `.DirIcon` symlink). Only the final
+    // installer files are deliverables, so verify those as regular files in a
+    // separate directory instead of hashing the whole staging tree.
+    let extensions = current_platform_installer_extensions()?;
+    let staged = repository_root.join("target/debug/verified-installers");
+    let count = stage_and_verify_installers(&bundle_root, extensions, &staged)?;
     println!(
-        "wrote and verified artifact checksum manifest: {}",
-        manifest_path.display()
+        "verified {count} final installer file(s) in {}",
+        staged.display()
     );
     Ok(())
+}
+
+fn current_platform_installer_extensions() -> Result<&'static [&'static str], String> {
+    if cfg!(target_os = "linux") {
+        Ok(&[".deb", ".rpm", ".AppImage"])
+    } else if cfg!(windows) {
+        Ok(&[".exe"])
+    } else {
+        Err(
+            "installer verification is defined for Linux and Windows; macOS uses the app bundle layout"
+                .to_owned(),
+        )
+    }
+}
+
+fn is_installer_path(path: &Path, extensions: &[&str]) -> bool {
+    let text = path.to_string_lossy();
+    extensions.iter().any(|extension| text.ends_with(extension))
+}
+
+fn collect_final_installers(root: &Path, extensions: &[&str]) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    collect_installers_in(root, extensions, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_installers_in(
+    directory: &Path,
+    extensions: &[&str],
+    files: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    let mut children = fs::read_dir(directory)
+        .map_err(|error| {
+            format!(
+                "could not enumerate installer directory {}: {error}",
+                directory.display()
+            )
+        })?
+        .map(|entry| {
+            entry
+                .map(|entry| entry.path())
+                .map_err(|error| format!("could not read installer directory entry: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    children.sort();
+
+    for path in children {
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
+            format!("could not inspect bundle entry {}: {error}", path.display())
+        })?;
+        let installer = is_installer_path(&path, extensions);
+        if metadata.file_type().is_symlink() {
+            if installer {
+                return Err(format!(
+                    "final installer must be a regular file, not a symlink: {}",
+                    path.display()
+                ));
+            }
+            // Intermediate staging entries such as `AppDir/.DirIcon` are not
+            // deliverables; ignore them instead of traversing or hashing them.
+            continue;
+        }
+        if metadata.is_dir() {
+            collect_installers_in(&path, extensions, files)?;
+        } else if metadata.is_file() {
+            if installer {
+                files.push(path);
+            }
+        } else if installer {
+            return Err(format!(
+                "final installer has an unsupported file type: {}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn installer_manifest(files: &[PathBuf]) -> Result<String, String> {
+    let mut lines = Vec::new();
+    for path in files {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| format!("installer path is not valid UTF-8: {}", path.display()))?;
+        let digest = sha256_file(path)?;
+        lines.push(format!("{digest}  {name}"));
+    }
+    lines.sort();
+    Ok(if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    })
+}
+
+/// Copy only the final regular installer files into `stage_dir`, then write and
+/// verify a checksum manifest over the delivered bytes. A symlinked installer
+/// input is refused so it cannot pull unrelated content into the manifest.
+fn stage_and_verify_installers(
+    bundle_root: &Path,
+    extensions: &[&str],
+    stage_dir: &Path,
+) -> Result<usize, String> {
+    let installers = collect_final_installers(bundle_root, extensions)?;
+    for extension in extensions {
+        let count = installers
+            .iter()
+            .filter(|path| is_installer_path(path, &[*extension]))
+            .count();
+        if count != 1 {
+            return Err(format!(
+                "expected exactly one {extension} installer, found {count}"
+            ));
+        }
+    }
+
+    remove_generated_path(stage_dir)?;
+    fs::create_dir_all(stage_dir).map_err(|error| {
+        format!(
+            "could not create verified installer directory {}: {error}",
+            stage_dir.display()
+        )
+    })?;
+
+    let mut staged = Vec::new();
+    let mut names = std::collections::HashSet::new();
+    for installer in &installers {
+        let name = installer
+            .file_name()
+            .ok_or_else(|| format!("installer has no file name: {}", installer.display()))?;
+        if !names.insert(name.to_owned()) {
+            return Err(format!(
+                "duplicate installer file name: {}",
+                name.to_string_lossy()
+            ));
+        }
+        let destination = stage_dir.join(name);
+        fs::copy(installer, &destination).map_err(|error| {
+            format!("could not stage installer {}: {error}", installer.display())
+        })?;
+        require_regular_file(&destination, "staged installer")?;
+        staged.push(destination);
+    }
+
+    let manifest_path = stage_dir.join("SHA256SUMS.txt");
+    let contents = installer_manifest(&staged)?;
+    fs::write(&manifest_path, &contents)
+        .map_err(|error| format!("could not write installer checksum manifest: {error}"))?;
+    let actual = fs::read_to_string(&manifest_path)
+        .map_err(|error| format!("could not read installer checksum manifest: {error}"))?;
+    let verified = installer_manifest(&staged)?;
+    if actual != verified {
+        return Err("installer checksum manifest changed during verification".to_owned());
+    }
+    Ok(staged.len())
 }
 
 fn verify_checksum_command(arguments: Vec<String>) -> Result<(), String> {
@@ -2012,6 +2171,120 @@ mod tests {
         ])
         .expect("inner manifest should verify relative to its package root");
         fs::remove_dir_all(root).expect("remove inner manifest fixture");
+    }
+
+    fn installer_fixture_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "mobarust-xtask-installer-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn final_installers_ignore_intermediate_appdir_symlinks() {
+        let root = installer_fixture_root("filter");
+        let bundle = root.join("bundle");
+        let appdir = bundle.join("appimage/MobaRust.AppDir");
+        fs::create_dir_all(appdir.join("usr/bin")).expect("create appdir");
+        fs::write(appdir.join("usr/bin/mobarust"), b"binary").expect("write appdir binary");
+        fs::create_dir_all(bundle.join("deb")).expect("create deb dir");
+        fs::create_dir_all(bundle.join("rpm")).expect("create rpm dir");
+        fs::write(
+            bundle.join("appimage/MobaRust_0.1.0_amd64.AppImage"),
+            b"appimage",
+        )
+        .expect("write appimage");
+        fs::write(bundle.join("deb/MobaRust_0.1.0_amd64.deb"), b"deb").expect("write deb");
+        fs::write(bundle.join("rpm/MobaRust-0.1.0-1.x86_64.rpm"), b"rpm").expect("write rpm");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("AppRun", appdir.join("AppRun"))
+                .expect("create AppRun symlink");
+            std::os::unix::fs::symlink("usr/bin/mobarust", appdir.join(".DirIcon"))
+                .expect("create DirIcon symlink");
+        }
+
+        let installers = collect_final_installers(&bundle, &[".deb", ".rpm", ".AppImage"])
+            .expect("collect final installers");
+        assert_eq!(installers.len(), 3);
+        for installer in &installers {
+            assert!(fs::symlink_metadata(installer).unwrap().is_file());
+        }
+        assert!(
+            installers
+                .iter()
+                .all(|path| !path.to_string_lossy().contains("DirIcon"))
+        );
+
+        fs::remove_dir_all(root).expect("remove installer fixture");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_final_installer_is_rejected() {
+        let root = installer_fixture_root("symlink-installer");
+        let bundle = root.join("bundle/deb");
+        fs::create_dir_all(&bundle).expect("create deb dir");
+        let outside = root.join("outside.bin");
+        fs::write(&outside, b"unrelated").expect("write outside file");
+        std::os::unix::fs::symlink(&outside, bundle.join("MobaRust_0.1.0_amd64.deb"))
+            .expect("create installer symlink");
+
+        let error = collect_final_installers(&root.join("bundle"), &[".deb", ".rpm", ".AppImage"])
+            .expect_err("a symlinked installer must be rejected");
+        assert!(error.contains("symlink"), "unexpected error: {error}");
+
+        fs::remove_dir_all(root).expect("remove installer fixture");
+    }
+
+    #[test]
+    fn staging_hashes_only_final_installers() {
+        let root = installer_fixture_root("stage");
+        let bundle = root.join("bundle");
+        let appdir = bundle.join("appimage/MobaRust.AppDir");
+        fs::create_dir_all(appdir.join("usr")).expect("create appdir");
+        fs::write(appdir.join("usr/payload"), b"payload").expect("write appdir payload");
+        fs::create_dir_all(bundle.join("deb")).expect("create deb dir");
+        fs::create_dir_all(bundle.join("rpm")).expect("create rpm dir");
+        fs::write(
+            bundle.join("appimage/MobaRust_0.1.0_amd64.AppImage"),
+            b"appimage-bytes",
+        )
+        .expect("write appimage");
+        fs::write(bundle.join("deb/MobaRust_0.1.0_amd64.deb"), b"deb-bytes").expect("write deb");
+        fs::write(bundle.join("rpm/MobaRust-0.1.0-1.x86_64.rpm"), b"rpm-bytes").expect("write rpm");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("usr/payload", appdir.join(".DirIcon"))
+                .expect("create DirIcon symlink");
+        }
+
+        let stage = root.join("staged");
+        let count = stage_and_verify_installers(&bundle, &[".deb", ".rpm", ".AppImage"], &stage)
+            .expect("stage final installers");
+        assert_eq!(count, 3);
+
+        let manifest = fs::read_to_string(stage.join("SHA256SUMS.txt")).expect("read manifest");
+        assert_eq!(manifest.lines().count(), 3);
+        assert!(!manifest.contains("DirIcon"));
+        for line in manifest.lines() {
+            let (digest, name) = line.split_once("  ").expect("manifest line");
+            let bytes = fs::read(stage.join(name)).expect("read staged installer");
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            let actual: String = hasher
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            assert_eq!(digest, actual, "manifest must hash the delivered bytes");
+        }
+
+        fs::remove_dir_all(root).expect("remove installer fixture");
     }
 
     #[test]

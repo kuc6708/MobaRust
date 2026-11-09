@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -128,6 +128,30 @@ test('Linux collector rejects duplicate formats before writing output', () => {
     assert.equal(readFileSync(join(cwd, `target/release/bundle/second${extension}`), 'utf8'), 'second-package');
   });
 });
+
+test('collector ignores AppDir staging symlinks and rejects a symlinked installer', () => fixture(({ cwd, put, invoke }) => {
+  put('apps/desktop/src-tauri/helpers/mobarust-vnc-helper', 'helper');
+  put('target/release/bundle/deb/MobaRust_0.1.0_amd64.deb', 'deb');
+  put('target/release/bundle/rpm/MobaRust-0.1.0-1.x86_64.rpm', 'rpm');
+  put('target/release/bundle/appimage/MobaRust_0.1.0_amd64.AppImage', 'appimage');
+  put('target/release/bundle/appimage/MobaRust.AppDir/usr/bin/mobarust', 'binary');
+  assert.equal(invoke('collect', 'linux-x64').status, 0);
+
+  if (process.platform !== 'win32') {
+    const appDir = join(cwd, 'target/release/bundle/appimage/MobaRust.AppDir');
+    symlinkSync('AppRun', join(appDir, 'AppRun'));
+    symlinkSync('usr/bin/mobarust', join(appDir, '.DirIcon'));
+    assert.equal(invoke('collect', 'linux-x64', 'target/release/bundle', 'target/release-assets/with-symlinks').status, 0);
+
+    const deb = join(cwd, 'target/release/bundle/deb/MobaRust_0.1.0_amd64.deb');
+    rmSync(deb);
+    writeFileSync(join(cwd, 'outside.bin'), 'outside-bytes');
+    symlinkSync(join(cwd, 'outside.bin'), deb);
+    const result = invoke('collect', 'linux-x64', 'target/release/bundle', 'target/release-assets/rejected');
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /symlink/);
+  }
+}));
 
 test('collector refuses stale installers without deleting them', () => fixture(({ cwd, put, invoke }) => {
   put('apps/desktop/src-tauri/helpers/mobarust-vnc-helper', 'helper');
