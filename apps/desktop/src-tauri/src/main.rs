@@ -491,6 +491,23 @@ fn session_import_openssh(
 }
 
 #[tauri::command]
+fn session_import_mobaxterm(
+    store: State<'_, Mutex<SessionStore>>,
+    payload: ImportOpenSshRequest,
+) -> Result<OpenSshImportReport, String> {
+    let path = payload
+        .path
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| expand_user_path(&p))
+        .ok_or("An explicit bookmark file path is required")?;
+    store
+        .lock()
+        .map_err(|_| "session store lock poisoned".to_owned())?
+        .import_mobaxterm_config(path)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn session_export(store: State<'_, Mutex<SessionStore>>) -> Result<String, String> {
     store
         .lock()
@@ -891,6 +908,7 @@ fn session_save_ssh(
     };
     let session = SessionRecord {
         id: SessionId::new(),
+        terminal_preferences: None,
         name,
         protocol: Protocol::Ssh,
         hostname: host,
@@ -972,6 +990,7 @@ fn session_save_serial(
     let SaveSerialSessionRequest { name, request } = payload;
     let session = SessionRecord {
         id: SessionId::new(),
+        terminal_preferences: None,
         name,
         protocol: Protocol::Serial,
         hostname: request.device.clone(),
@@ -1038,6 +1057,7 @@ fn session_save_telnet(
     };
     let session = SessionRecord {
         id: SessionId::new(),
+        terminal_preferences: None,
         name,
         protocol: Protocol::Telnet,
         hostname: host,
@@ -1102,6 +1122,7 @@ fn session_save_remote_desktop(
     };
     let session = SessionRecord {
         id: SessionId::new(),
+        terminal_preferences: None,
         name,
         protocol,
         hostname: request.host,
@@ -1184,6 +1205,35 @@ async fn network_check_tcp(
     })
     .await
     .map_err(|error| error.to_string())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SshTrustRequest {
+    host: String,
+    port: u16,
+    public_key: String,
+    confirmed_fingerprint: String,
+    known_hosts_path: String,
+}
+
+#[tauri::command]
+async fn ssh_trust_unknown_host_key(request: SshTrustRequest) -> Result<(), String> {
+    let path = std::path::PathBuf::from(&request.known_hosts_path);
+    if !path.is_absolute() {
+        return Err("Enter an absolute known_hosts path".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        mobarust_ssh::trust_unknown_host_key(
+            &request.host,
+            request.port,
+            &request.public_key,
+            &request.confirmed_fingerprint,
+            &path,
+        )
+    })
+    .await
+    .map_err(|_| "Host trust operation failed".to_owned())?
 }
 
 #[tauri::command]
@@ -1968,6 +2018,7 @@ fn main() {
             session_list,
             session_save,
             session_import_openssh,
+            session_import_mobaxterm,
             session_export,
             session_import,
             session_set_favorite,
@@ -2003,6 +2054,7 @@ fn main() {
             network_resolve_host,
             network_check_tcp,
             ssh_inspect_host_key,
+            ssh_trust_unknown_host_key,
             network_ping_start,
             network_traceroute_start,
             network_diagnostic_cancel,

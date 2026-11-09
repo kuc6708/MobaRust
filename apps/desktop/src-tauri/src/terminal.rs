@@ -342,8 +342,34 @@ impl TerminalManager {
             .try_lock_owned()
             .map_err(|_| TerminalError::InputBusy)?;
         tauri::async_runtime::spawn_blocking(move || {
-            writer.write_all(&data).map_err(TerminalError::Io)?;
-            writer.flush().map_err(TerminalError::Io)
+            #[cfg(unix)]
+            let _nonblocking = NonblockingPty::new(&session)?;
+            if session.closing.load(Ordering::Acquire) {
+                return Err(TerminalError::Io(std::io::ErrorKind::BrokenPipe.into()));
+            }
+            let mut remaining = data.as_slice();
+            while !remaining.is_empty() {
+                if session.closing.load(Ordering::Acquire) {
+                    return Err(TerminalError::Io(std::io::ErrorKind::BrokenPipe.into()));
+                }
+                match writer.write(remaining) {
+                    Ok(0) => return Err(TerminalError::Io(std::io::ErrorKind::WriteZero.into())),
+                    Ok(size) => remaining = &remaining[size..],
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => return Err(TerminalError::Io(error)),
+                }
+            }
+            writer.flush().map_err(TerminalError::Io)?;
+            // Some PTY drivers accept the final buffered bytes as the child
+            // exits. Close must still retire this input operation rather than
+            // report successful delivery to a terminal that no longer exists.
+            if session.closing.load(Ordering::Acquire) {
+                return Err(TerminalError::Io(std::io::ErrorKind::BrokenPipe.into()));
+            }
+            Ok(())
         })
         .await
         .map_err(|_| TerminalError::InputWorker)?
@@ -477,10 +503,64 @@ impl TerminalManager {
     }
 }
 
+/// Unix PTY writes can remain blocked after the slave exits. Poll writable
+/// capacity with cancellation checks; restore shared descriptor flags on exit.
+#[cfg(unix)]
+struct NonblockingPty<'a> {
+    fd: std::os::fd::RawFd,
+    flags: libc::c_int,
+    session: &'a TerminalSession,
+}
+
+#[cfg(unix)]
+impl<'a> NonblockingPty<'a> {
+    fn new(session: &'a TerminalSession) -> Result<Self, TerminalError> {
+        let master = session
+            .master
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let fd = master
+            .as_raw_fd()
+            .ok_or_else(|| TerminalError::Io(std::io::ErrorKind::Unsupported.into()))?;
+        // SAFETY: the owning session stays alive until this guard is dropped.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return Err(TerminalError::Io(std::io::Error::last_os_error()));
+        }
+        Ok(Self { fd, flags, session })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for NonblockingPty<'_> {
+    fn drop(&mut self) {
+        // portable-pty's Unix writer sends an EOF sequence from Drop. Keep
+        // retired PTYs nonblocking so that final write cannot hang cleanup.
+        let _master = self
+            .session
+            .master
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if self.session.closing.load(Ordering::Acquire) {
+            return;
+        }
+        // SAFETY: this guard is dropped before the owning session reference.
+        unsafe {
+            libc::fcntl(self.fd, libc::F_SETFL, self.flags);
+        }
+    }
+}
+
 /// Stop and reap a native PTY child under its child lock. Shared by close, worker-start
 /// failure, and reader EOF so every local process has a deterministic owner.
 fn cleanup_session(session: &TerminalSession) -> Result<(), TerminalError> {
     session.closing.store(true, Ordering::Release);
+    #[cfg(unix)]
+    {
+        // Also covers an idle writer whose last successful write filled the
+        // kernel queue. Its dependency-owned EOF write must never block Drop.
+        let _ = NonblockingPty::new(session);
+    }
     // Cleanup must retain ownership even if an earlier operation panicked.
     session
         .start
@@ -627,6 +707,10 @@ fn stream_output<R: Read + Send + 'static>(
                             break;
                         }
                     }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
                     Err(_) => break,
                 }
             }
@@ -679,10 +763,10 @@ fn stream_output<R: Read + Send + 'static>(
 
 fn cleanup_stream_session(manager: &TerminalManager, terminal_id: &str) {
     // Keep the cleanup owner registered until it is reaped, including at EOF.
-    if let Err(error) = manager.close(terminal_id) {
-        if !matches!(error, TerminalError::Missing(_)) {
-            tracing::warn!(event = "local_terminal_stream_cleanup_failed", error = %error);
-        }
+    if let Err(error) = manager.close(terminal_id)
+        && !matches!(error, TerminalError::Missing(_))
+    {
+        tracing::warn!(event = "local_terminal_stream_cleanup_failed", error = %error);
     }
 }
 
@@ -1323,7 +1407,10 @@ mod tests {
         assert!(matches!(busy, Err(TerminalError::InputBusy)));
         close.expect("close non-reading child");
         assert!(matches!(closed, Ok(Some(_))), "child must be reaped");
-        assert!(matches!(completion, Ok(Ok(Err(TerminalError::Io(_))))));
+        assert!(
+            matches!(completion, Ok(Ok(Err(TerminalError::Io(_))))),
+            "blocked input completion (startup={startup}, shutdown={shutdown}): {completion:?}"
+        );
         assert!(matches!(
             manager.session("non-reader"),
             Err(TerminalError::Missing(_))

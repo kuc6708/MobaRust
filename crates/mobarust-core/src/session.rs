@@ -278,6 +278,14 @@ pub struct JumpHostRecord {
     pub server_alive_interval: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionTerminalPreferences {
+    pub font_size: u16,
+    pub scrollback_lines: u32,
+    pub cursor_blink: bool,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionRecord {
@@ -288,6 +296,8 @@ pub struct SessionRecord {
     pub port: u16,
     pub username: Option<String>,
     pub auth: AuthMethod,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_preferences: Option<SessionTerminalPreferences>,
     #[serde(default)]
     pub last_used_at: Option<u64>,
     #[serde(default)]
@@ -334,6 +344,8 @@ pub enum SessionValidationError {
     MissingPort,
     #[error("session tags cannot be empty")]
     EmptyTag,
+    #[error("terminal preferences require font size 8–32 and scrollback 100–100000")]
+    InvalidTerminalPreferences,
     #[error("saved authentication reference cannot be empty")]
     EmptyAuthReference,
     #[error("saved private-key reference is invalid")]
@@ -405,6 +417,7 @@ impl SessionRecord {
     pub fn local_terminal(name: impl Into<String>) -> Self {
         Self {
             id: SessionId::new(),
+            terminal_preferences: None,
             name: name.into(),
             protocol: Protocol::Local,
             hostname: "localhost".into(),
@@ -433,6 +446,16 @@ impl SessionRecord {
     }
 
     pub fn validate(&self) -> Result<(), SessionValidationError> {
+        if self
+            .terminal_preferences
+            .as_ref()
+            .is_some_and(|preferences| {
+                !(8..=32).contains(&preferences.font_size)
+                    || !(100..=100_000).contains(&preferences.scrollback_lines)
+            })
+        {
+            return Err(SessionValidationError::InvalidTerminalPreferences);
+        }
         if self.name.trim().is_empty() {
             return Err(SessionValidationError::EmptyName);
         }
@@ -609,6 +632,7 @@ mod tests {
     fn remote_sessions_require_a_port() {
         let session = SessionRecord {
             id: SessionId::new(),
+            terminal_preferences: None,
             name: "production".into(),
             protocol: Protocol::Ssh,
             hostname: "prod.example.test".into(),

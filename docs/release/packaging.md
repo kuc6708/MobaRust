@@ -1,11 +1,36 @@
 # Desktop packaging boundary
 
+## Development workflow updates
+
+The production-readiness branch restores push/PR/manual quality checks and
+adds a reusable validation gate before release builds. The matrix includes
+Windows x64/ARM64, Linux x64/ARM64, and both macOS architectures. ARM builds use
+native `windows-11-arm` and `ubuntu-24.04-arm` runners; these runner labels are
+listed in [GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+Workflow recipes are not execution evidence. Repository Actions settings and
+write permissions must allow execution before artifacts can exist.
+
+Release upload verifies all SHA256 manifests, then creates a **draft prerelease**.
+It cannot publish a final stable release. Dependency warnings are not suppressed:
+the strict audit gate must be resolved before the release workflow succeeds.
+Code-signing credentials are never required for local checks. Publisher-trusted
+Windows signing and Apple Developer ID signing/notarization require owner-held
+credentials and independent clean-install/runtime acceptance.
+
+macOS Universal bundles and release-grade portable archives remain
+unvalidated. Existing `cargo xtask portable-check` creates a macOS-only development archive
+with its own checksums; it is not included as a production release artifact.
+AppImage output depends on compatible native bundler tooling on ARM. A failed
+format must remain a failed build; it must not be silently dropped from a
+published checksum manifest.
+
 ## Downloadable previews
 
 The v0.1.12 preview has Windows x64 NSIS, Linux x64 Debian/AppImage, and macOS
-ARM64/x64 DMG packages. The newer [v0.1.26 preview](v0.1.26.md) updates only
-the two Mac DMGs using local builds. The release workflow is disabled; new
-builds and checks run locally. A release tag must match the Cargo, frontend,
+ARM64/x64 DMG packages. The newer [v0.1.31 preview](v0.1.31.md) updates only
+the two Mac DMGs using local builds. Upstream workflow runs were documented as
+disabled at the source snapshot; new recipes still require owner-enabled
+Actions and write permission. Local builds remain available. A release tag must match the Cargo, frontend,
 and Tauri versions.
 
 These unsigned previews are separate from the signed production distribution
@@ -64,7 +89,7 @@ output directory for local releases. The collector refuses an output directory
 containing installers from another version, preserving those files for review
 instead of mixing them into a new upload.
 It requires exactly one installer of each target format before writing any
-output: EXE for Windows, DMG for macOS, and both DEB and AppImage for Linux.
+output: EXE for Windows, DMG for macOS, and DEB, RPM and AppImage for Linux.
 Two DEBs or two AppImages cannot substitute for the Linux pair or overwrite
 the same canonical output with duplicate checksum entries. These collection
 checks do not establish the package's contents or runtime behavior.
@@ -75,7 +100,8 @@ For MobaRust, the current Tauri filename patterns are:
 | Target | Source installer names |
 | --- | --- |
 | Windows x64 | `MobaRust_<version>_x64-setup.exe` |
-| Linux x64 | `MobaRust_<version>_amd64.deb` and `MobaRust_<version>_amd64.AppImage` |
+| Linux x64 | `MobaRust_<version>_amd64.deb`, `MobaRust_<version>_amd64.AppImage`, `MobaRust-<version>-1.x86_64.rpm` |
+| Linux ARM64 recipe | `MobaRust_<version>_arm64.deb`, `MobaRust_<version>_aarch64.AppImage`, `MobaRust-<version>-1.aarch64.rpm` |
 | macOS ARM64 | `MobaRust_<version>_aarch64.dmg` |
 | macOS x64 | `MobaRust_<version>_x64.dmg` |
 

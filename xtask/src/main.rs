@@ -231,9 +231,46 @@ fn remove_unshippable_rdp_helper(
 }
 
 fn package_check() -> Result<(), String> {
+    let format = if cfg!(target_os = "macos") {
+        "app"
+    } else if cfg!(target_os = "windows") {
+        "nsis"
+    } else if cfg!(target_os = "linux") {
+        "deb,rpm,appimage"
+    } else {
+        return Err("package-check has no bundle format for this platform".into());
+    };
     run(
         "pnpm",
-        ["tauri", "build", "--debug", "--no-sign", "--bundles", "app"],
+        [
+            "tauri",
+            "icon",
+            "src-tauri/icons/icon.png",
+            "--output",
+            "../../target/bundle-icons",
+        ],
+        Some("apps/desktop"),
+    )?;
+    for extension in ["ico", "icns"] {
+        fs::copy(
+            format!("target/bundle-icons/icon.{extension}"),
+            format!("apps/desktop/src-tauri/icons/icon.{extension}"),
+        )
+        .map_err(|error| format!("could not stage native icon: {error}"))?;
+    }
+    run(
+        "pnpm",
+        [
+            "tauri",
+            "build",
+            "--verbose",
+            "--debug",
+            "--no-sign",
+            "--bundles",
+            format,
+            "--config",
+            "src-tauri/tauri.release.conf.json",
+        ],
         Some("apps/desktop"),
     )?;
     verify_current_platform_bundle()?;
@@ -820,9 +857,9 @@ fn run_sanitized_output(
 
 fn pre_push_check() -> Result<(), String> {
     let branch = git_output(&["branch", "--show-current"])?;
-    if !branch.status.success() || branch.stdout.trim() != "main" {
+    if !branch.status.success() || branch.stdout.trim().is_empty() {
         return Err(format!(
-            "push audit requires branch main, found {:?}",
+            "push audit requires a named development branch, found {:?}",
             branch.stdout.trim()
         ));
     }
@@ -904,7 +941,8 @@ fn pre_push_check() -> Result<(), String> {
         ));
     }
     println!(
-        "pre-push audit passed: branch=main, base=ignored, private-key markers=reviewed, commits={}",
+        "pre-push audit passed: branch={}, base=ignored, private-key markers=reviewed, commits={}",
+        branch.stdout.trim(),
         ahead.stdout.trim()
     );
     Ok(())
@@ -1699,6 +1737,9 @@ fn apply_project_tool_configuration(command: &mut Command, program: &str, direct
         && let Some(store_dir) = project_pnpm_store_dir(&repository_root)
     {
         command.env("npm_config_store_dir", store_dir);
+        // Reuse only repository-owned bundler downloads across isolated runs.
+        // No personal cache, credentials or configuration are consulted.
+        command.env("XDG_CACHE_HOME", repository_root.join("target/tool-cache"));
     }
 }
 

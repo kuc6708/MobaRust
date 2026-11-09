@@ -9,7 +9,11 @@ permissions:
   contents: read
 
 jobs:
+  validation:
+    uses: ./.github/workflows/quality.yml
   build:
+    needs: validation
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -17,9 +21,15 @@ jobs:
           - runner: windows-latest
             platform: windows-x64
             bundles: nsis
+          - runner: windows-11-arm
+            platform: windows-arm64
+            bundles: nsis
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+            bundles: deb,appimage,rpm
           - runner: ubuntu-22.04
             platform: linux-x64
-            bundles: deb,appimage
+            bundles: deb,appimage,rpm
           - runner: macos-15
             platform: macos-arm64
             bundles: dmg
@@ -44,7 +54,7 @@ jobs:
             tools/vnc-helper -> target
       - name: Linux build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get update && sudo apt-get install -y openssh-server xauth libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - run: pnpm install --frozen-lockfile
         working-directory: apps/desktop
       - name: Verify version matches tag
@@ -55,6 +65,8 @@ jobs:
       - name: Frontend checks
         working-directory: apps/desktop
         run: pnpm check && pnpm lint && pnpm test:unit
+      - name: Rust tests before packaging
+        run: cargo test --workspace --locked --lib
       - name: Generate native bundle icons
         working-directory: apps/desktop
         run: pnpm tauri icon src-tauri/icons/icon.png
@@ -88,7 +100,11 @@ jobs:
           pattern: installers-*
           path: release-assets
           merge-multiple: true
+      - name: Verify every downloaded checksum manifest
+        run: |
+          cd release-assets
+          for manifest in SHA256SUMS-*.txt; do sha256sum --check "$manifest"; done
       - name: Publish preview with installers
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --prerelease --title "MobaRust $GITHUB_REF_NAME — Desktop Preview" --notes-file docs/release/preview-notes.md
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --draft --prerelease --title "MobaRust $GITHUB_REF_NAME — Desktop Preview" --notes-file docs/release/preview-notes.md

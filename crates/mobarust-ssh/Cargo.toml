@@ -8,6 +8,7 @@ rust-version.workspace = true
 description = "Native SSH transport and interactive PTY primitives for MobaRust"
 
 [dependencies]
+libc.workspace = true
 anyhow.workspace = true
 encoding_rs.workspace = true
 mobarust-core = { path = "../mobarust-core" }

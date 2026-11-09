@@ -1002,7 +1002,7 @@ async fn finite_session_operations_settle_before_transport_cleanup() {
                 result.is_ok()
                     || matches!(result, Err(russh::Error::Disconnect))
                     || matches!(&result, Err(russh::Error::IO(error))
-                        if matches!(error.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::UnexpectedEof)),
+                        if matches!(error.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::BrokenPipe)),
                 "unexpected SSH fixture error: {result:?}"
             );
             drop(

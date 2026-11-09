@@ -105,6 +105,11 @@ On Mac, move MobaRust to Applications. On Debian/Ubuntu, use `sudo apt install .
 
 ## 🚀 What's new — 0.1.31
 
+Development work after 0.1.31 adds [explicit SSH host trust review](docs/security/host-trust.md)
+and [MobaXterm text bookmark import](docs/migration-from-mobaxterm.md).
+These changes are unreleased. See the [development-cycle status](docs/testing/production-readiness-2026-11-09.md)
+for actual validation results and outstanding release gates.
+
 - **Live tunnel traffic:** local, SOCKS5 and remote forwards now show payload bytes while clients remain connected.
 - **Accurate stopped totals:** Stop and copy errors retain accepted bytes; completed copies count once and SOCKS5 framing is excluded.
 - **Native checks:** the ARM64 installer copy passed live/stopped totals, SSH-tab Close and normal Quit with eight byte-matched clients and clean fixture shutdown.

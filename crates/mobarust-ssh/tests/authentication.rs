@@ -1851,7 +1851,7 @@ async fn distinct_challenges_are_owned_by_each_hop_and_fail_closed() {
                 drop(connection);
             }
             ("trust", Some(result)) => {
-                assert!(matches!(result, Err(SshError::HostKeyRejected { .. })))
+                assert!(matches!(result, Err(SshError::HostKeyUnknown { .. })))
             }
             ("otp", Some(result)) => {
                 assert!(matches!(result, Err(SshError::AuthenticationRejected)))
@@ -2042,7 +2042,7 @@ async fn interactive_responder_is_bounded_and_cancelled_without_sending_secrets(
                 "echo" => matches!(error, SshError::KeyboardInteractiveEchoPrompt),
                 "fanout" => matches!(error, SshError::KeyboardInteractiveTooManyPrompts),
                 "rounds" => matches!(error, SshError::KeyboardInteractiveChallengeLimit),
-                "trust" => matches!(error, SshError::HostKeyRejected { .. }),
+                "trust" => matches!(error, SshError::HostKeyUnknown { .. }),
                 "cancel" => matches!(error, SshError::AuthenticationCancelled),
                 _ => matches!(error, SshError::KeyboardInteractiveInvalidResponses),
             });
@@ -2177,7 +2177,7 @@ async fn host_key_rejection_precedes_password_or_interactive_authentication() {
         options.host_key_policy = HostKeyPolicy::RejectUnknown;
         assert!(matches!(
             SshConnection::connect(options).await,
-            Err(SshError::HostKeyRejected { .. })
+            Err(SshError::HostKeyUnknown { .. })
         ));
         assert_eq!(
             fixture

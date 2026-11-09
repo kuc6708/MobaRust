@@ -97,6 +97,19 @@ fn fixture_shell_uses_only_the_disposable_home() {
     let runtime = tokio::runtime::Runtime::new().expect("create SSH test runtime");
     runtime.block_on(async {
         let fixture = LocalSshd::start().expect("start local sshd fixture");
+        for name in [
+            ".bashrc",
+            ".profile",
+            ".bash_profile",
+            ".zshenv",
+            ".zprofile",
+        ] {
+            fs::write(
+                fixture.directory.path().join(name),
+                "printf 'UNWANTED_FIXTURE_STARTUP\\n'\n",
+            )
+            .unwrap();
+        }
         wait_for_port(fixture.port).await;
         let connection = SshConnection::connect(fixture.options())
             .await
@@ -108,6 +121,10 @@ fn fixture_shell_uses_only_the_disposable_home() {
         .await;
         let home = fixture.directory.path().to_string_lossy();
         assert!(output.contains(&format!("MOBARUST_HOME={home}\r\n")));
+        assert!(
+            !output.contains("UNWANTED_FIXTURE_STARTUP"),
+            "fixture loaded a startup file"
+        );
         assert!(output.contains(&format!("MOBARUST_ZDOTDIR={home}\r\n")));
         let sftp = connection.open_sftp().await.expect("open isolated SFTP");
         assert_eq!(
@@ -959,7 +976,7 @@ fn distinct_jump_hosts_verify_every_key_and_reach_the_target() {
                 HostKeyPolicy::PinnedFingerprint("SHA256:untrusted-fixture".into());
             let [first, second, target] = options;
             match SshConnection::connect_with_jump_chain(target, vec![first, second]).await {
-                Err(SshError::HostKeyRejected { fingerprint }) => {
+                Err(SshError::HostKeyChanged { fingerprint, .. }) => {
                     assert_eq!(fingerprint, fingerprints[rejected_hop])
                 }
                 _ => panic!("jump chain accepted an untrusted hop"),
@@ -977,7 +994,7 @@ fn distinct_jump_hosts_verify_every_key_and_reach_the_target() {
         options.host_key_policy = HostKeyPolicy::KnownHosts(wrong_hosts.clone());
         assert!(matches!(
             SshConnection::connect(options).await,
-            Err(SshError::HostKeyRejected { .. })
+            Err(SshError::HostKeyChanged { .. })
         ));
         assert_eq!(
             fs::read_to_string(&wrong_hosts).expect("read unchanged trust file"),
@@ -1079,7 +1096,7 @@ fn run_ipv6_stream_lab(frequent_rekey: bool) {
             )
             .await
             .expect("IPv6 rejected-hop deadline");
-            assert!(matches!(result, Err(SshError::HostKeyRejected { .. })));
+            assert!(matches!(result, Err(SshError::HostKeyChanged { .. })));
         }
         let [first, second, target] = fixtures.each_ref().map(LocalSshd::ipv6_options);
         let trust_before = fixtures.each_ref().map(|fixture| {
@@ -1985,7 +2002,7 @@ fn connects_to_a_reproducible_local_sshd_fixture_with_a_real_pty_shell() {
         let rejection = SshConnection::connect(SshConnectOptions {
             host: "127.0.0.1".into(),
             port: fixture.port,
-            host_key_policy: HostKeyPolicy::KnownHosts(unknown_hosts),
+            host_key_policy: HostKeyPolicy::KnownHosts(unknown_hosts.clone()),
             timeout: Duration::from_secs(5),
             keepalive_interval: None,
             credentials: SshCredentials::private_key(
@@ -2000,7 +2017,7 @@ fn connects_to_a_reproducible_local_sshd_fixture_with_a_real_pty_shell() {
         })
         .await;
         let rejected_fingerprint = match rejection {
-            Err(SshError::HostKeyRejected { fingerprint }) => {
+            Err(SshError::HostKeyUnknown { fingerprint, .. }) => {
                 assert!(fingerprint.starts_with("SHA256:"));
                 fingerprint
             }
@@ -2018,6 +2035,14 @@ fn connects_to_a_reproducible_local_sshd_fixture_with_a_real_pty_shell() {
         assert_eq!(inspection.fingerprint, rejected_fingerprint);
         assert_eq!(inspection.host, "127.0.0.1");
         assert_eq!(inspection.port, fixture.port);
+        assert_eq!(inspection.algorithm, "ssh-ed25519");
+        mobarust_ssh::trust_unknown_host_key("127.0.0.1", fixture.port,
+            &inspection.public_key, &inspection.fingerprint, &unknown_hosts).unwrap();
+        let mut trusted_options = fixture.options();
+        trusted_options.host_key_policy = HostKeyPolicy::KnownHosts(unknown_hosts);
+        let trusted = SshConnection::connect(trusted_options).await.expect("explicitly persisted fixture trust");
+        trusted.disconnect().await.unwrap();
+
 
         let connection = SshConnection::connect(SshConnectOptions {
             host: "127.0.0.1".into(),
@@ -2649,6 +2674,18 @@ fn forwards_an_explicit_x11_channel_to_a_loopback_display_fixture() {
         let display_task = tokio::spawn(async move {
             let (mut stream, peer) = display.accept().await.expect("accept X11 display client");
             assert_eq!(peer.ip(), std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+            // Exercise a valid X11 setup, not an arbitrary opaque stream.
+            let mut header = [0_u8; 12];
+            stream.read_exact(&mut header).await.unwrap();
+            assert_eq!(header[0], b'l');
+            assert_eq!(u16::from_le_bytes([header[2], header[3]]), 11);
+            let auth_name_len = usize::from(u16::from_le_bytes([header[6], header[7]]));
+            let auth_data_len = usize::from(u16::from_le_bytes([header[8], header[9]]));
+            assert_eq!(auth_name_len, 18);
+            assert_eq!(auth_data_len, 16);
+            let mut auth = vec![0; auth_name_len.div_ceil(4) * 4 + auth_data_len.div_ceil(4) * 4];
+            stream.read_exact(&mut auth).await.unwrap();
+            assert_eq!(&auth[..auth_name_len], b"MIT-MAGIC-COOKIE-1");
             let mut payload = [0_u8; 15];
             stream
                 .read_exact(&mut payload)
@@ -2686,7 +2723,7 @@ fn forwards_an_explicit_x11_channel_to_a_loopback_display_fixture() {
         let (mut reader, writer) = shell.split();
         writer
             .write(
-            br#"python3 -c 'import os,socket; d=os.environ["DISPLAY"]; h,rest=d.rsplit(":",1); p=int(rest.split(".",1)[0])+6000; s=socket.create_connection((h,p),5); s.sendall(b"MOBARUST_X11_OK"); s.shutdown(socket.SHUT_WR); response=s.recv(15); assert response == b"MOBARUST_X11_OK"; s.close()'
+            br#"python3 -c 'import os,socket; d=os.environ["DISPLAY"]; h,rest=d.rsplit(":",1); p=int(rest.split(".",1)[0])+6000; s=socket.create_connection((h,p),5); import struct,subprocess; cookie=bytes.fromhex(subprocess.check_output(["xauth","-f",os.environ["XAUTHORITY"],"list"]).decode().split()[-1]); name=b"MIT-MAGIC-COOKIE-1"; s.sendall(struct.pack("<BBHHHHH",108,0,11,0,len(name),len(cookie),0)+name+b"\0"*((-len(name))%4)+cookie+b"\0"*((-len(cookie))%4)); s.sendall(b"MOBARUST_X11_OK"); s.shutdown(socket.SHUT_WR); response=s.recv(15); assert response == b"MOBARUST_X11_OK"; s.close()'
 exit
 "#,
             )
@@ -2712,10 +2749,22 @@ exit
                 }
             }
         };
-        tokio::time::timeout(Duration::from_secs(5), connection.bridge_x11_channel(channel))
-            .await
-            .expect("bridge X11 channel timeout")
-            .expect("bridge X11 channel");
+        let bridge = connection.bridge_x11_channel(channel);
+        tokio::pin!(bridge);
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                tokio::select! {
+                    result = &mut bridge => break result,
+                    output = reader.next_output() => {
+                        if let Some(Ok(SshOutput::Stdout(bytes) | SshOutput::Stderr(bytes))) = output {
+                            shell_output.extend(bytes);
+                        }
+                    }
+                }
+            }
+        }).await;
+        assert!(result.is_ok(), "X11 bridge timeout; shell={}; xauth={}", String::from_utf8_lossy(&shell_output), fs::read_to_string(fixture.directory.path().join("xauth-progress")).unwrap_or_default());
+        result.unwrap().expect("bridge X11 channel");
         display_task.await.expect("join X11 display fixture");
 
         while tokio::time::timeout(Duration::from_millis(250), reader.next_output())
@@ -2840,7 +2889,7 @@ impl LocalXvfb {
                 "-ac",
             ])
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()?;
         Ok(Some(Self { child, socket }))
     }
@@ -3097,14 +3146,37 @@ exit "$xauth_result"
             .to_string_lossy()
             .replace('\\', "\\\\")
             .replace('"', "\\\"");
+        // ForceCommand prevents sshd from starting an interactive login shell.
+        // SHLVL=2 prevents Bash's special noninteractive SSH .bashrc path
+        // before this fixed wrapper can install the disposable environment.
+        let fixture_shell = directory.path().join("fixture-shell");
+        let shell_home = directory.path().to_string_lossy().replace('\'', "'\\''");
+        fs::write(
+            &fixture_shell,
+            format!(
+                r#"#!/bin/sh
+exec /usr/bin/env -i HOME='{shell_home}' ZDOTDIR='{shell_home}' XDG_CONFIG_HOME='{shell_home}' XAUTHORITY='{shell_home}/.Xauthority' BASH_ENV=/dev/null ENV=/dev/null TERM=xterm-256color PATH=/usr/bin:/bin:/usr/local/bin DISPLAY="${{DISPLAY-}}" MOBARUST_FIXTURE="${{MOBARUST_FIXTURE-}}" /bin/sh -c 'if [ -n "$1" ]; then exec /bin/sh -c "$1"; else exec /bin/sh -i; fi' fixture "${{SSH_ORIGINAL_COMMAND-}}"
+"#
+            ),
+        )?;
+        fs::set_permissions(&fixture_shell, fs::Permissions::from_mode(0o700))?;
+        let sftp_server = [
+            "/usr/lib/openssh/sftp-server",
+            "/usr/libexec/sftp-server",
+            "/usr/local/libexec/sftp-server",
+        ]
+        .into_iter()
+        .find(|path| Path::new(path).is_file())
+        .ok_or("isolated SSH fixture requires the installed sftp-server executable")?;
         let config = directory.path().join("sshd_config");
         let ipv6_listener = if ipv6 { "ListenAddress ::1\n" } else { "" };
         fs::write(
             &config,
             format!(
-                "Port {port}\nListenAddress 127.0.0.1\n{ipv6_listener}HostKey {}\nAuthorizedKeysFile {}\nPidFile \"{home}/sshd.pid\"\nSubsystem sftp internal-sftp -d \"{home}\"\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthentication yes\nPermitRootLogin no\nPermitUserRC no\nPermitUserEnvironment no\nUsePAM no\nStrictModes no\nAllowTcpForwarding yes\nAcceptEnv MOBARUST_FIXTURE\nSetEnv \"HOME={home}\" \"ZDOTDIR={home}\" \"XDG_CONFIG_HOME={home}\" \"XAUTHORITY={home}/.Xauthority\" BASH_ENV=/dev/null ENV=/dev/null\n{x11_config}AllowUsers {username}\nPrintMotd no\nUseDNS no\nLogLevel QUIET\n",
+                "Port {port}\nListenAddress 127.0.0.1\n{ipv6_listener}HostKey {}\nAuthorizedKeysFile {}\nPidFile \"{home}/sshd.pid\"\nSubsystem sftp {sftp_server} -d \"{home}\"\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthentication yes\nPermitRootLogin no\nPermitUserRC no\nPermitUserEnvironment no\nUsePAM no\nStrictModes no\nAllowTcpForwarding yes\nAcceptEnv MOBARUST_FIXTURE\nSetEnv \"HOME={home}\" \"ZDOTDIR={home}\" \"XDG_CONFIG_HOME={home}\" \"XAUTHORITY={home}/.Xauthority\" BASH_ENV=/dev/null ENV=/dev/null SHLVL=2\nForceCommand {fixture_shell_path}\n{x11_config}AllowUsers {username}\nPrintMotd no\nUseDNS no\nLogLevel QUIET\n",
                 host_key.display(),
                 authorized_keys.display(),
+                fixture_shell_path = fixture_shell.display(),
             ),
         )?;
 
@@ -3175,7 +3247,9 @@ fn reserve_xvfb_display() -> Option<(u16, PathBuf)> {
 
 fn prepare_xvfb_socket_dir() -> Result<bool, Box<dyn std::error::Error>> {
     match fs::symlink_metadata(X11_SOCKET_DIR) {
-        Ok(metadata) => Ok(metadata.is_dir() && !metadata.file_type().is_symlink()),
+        Ok(metadata) => Ok(metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+            && metadata.permissions().mode() & 0o1777 == 0o1777),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error.into()),
     }

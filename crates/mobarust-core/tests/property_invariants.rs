@@ -16,6 +16,7 @@ fn ssh_session(
 ) -> SessionRecord {
     SessionRecord {
         id: SessionId::new(),
+        terminal_preferences: None,
         name,
         protocol: Protocol::Ssh,
         hostname,

@@ -60,3 +60,13 @@ The pre-push audit permits markers only in those exact indexed bytes; edited
 parser bytes or markers in any other indexed file are refused. No private-key
 fixture is included. The root dependency retains `default-features = false`
 and enables only `aws-lc-rs` and `flate2`; RSA remains disabled.
+
+# Additional known_hosts correction — production-readiness branch
+
+The local known_hosts parser now splits OpenSSH whitespace correctly, handles
+hostname wildcard/negated patterns, rejects revoked host records, and propagates
+file-open errors other than not-found. Multiple independently trusted keys
+are recognized, and explicit trust files must be regular files bounded to 4 MiB. Certificate-authority markers are not
+ordinary host records and do not establish trust. The application layer refuses
+unknown-key persistence when any conflicting host key exists. Regression tests
+live in `crates/mobarust-ssh/src/trust.rs` and the isolated OpenSSH fixture.

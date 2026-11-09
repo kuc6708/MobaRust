@@ -19,3 +19,10 @@ The [threat model](docs/security/threat-model.md),
 and limits. RDP remains experimental and excluded from normal bundles under
 its separate advisory gate. A clean dependency audit is not a guarantee that
 application code is vulnerability-free.
+
+The development branch documents [explicit SSH host trust](docs/security/host-trust.md)
+and [current validation/release blockers](docs/testing/production-readiness-2026-11-09.md).
+Unknown keys require operator review; changed keys are never replaced by the
+trust action. Both the shipping workspace and helper lockfiles require separate
+fresh audits. Strict release validation denies warnings; the recorded upstream
+GTK/DBus maintenance and unsoundness warnings remain visible and unresolved.

@@ -12,6 +12,9 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+mod trust;
+pub use trust::trust_unknown_host_key;
+
 use encoding_rs::WINDOWS_1252;
 use mobarust_core::{ConnectionEvent, ConnectionLifecycle, ConnectionState, MAX_SSH_JUMP_HOSTS};
 use russh::client;
@@ -65,8 +68,26 @@ pub enum SshError {
     InvalidOptions,
     #[error("SSH jump chain cannot exceed 8 hosts")]
     TooManyJumpHosts,
-    #[error("SSH host key rejected; observed fingerprint: {fingerprint}")]
+    #[error("Unknown SSH host key; observed fingerprint: {fingerprint}")]
     HostKeyRejected { fingerprint: String },
+    #[error(
+        "Unknown SSH host key for {host}:{port} ({algorithm}); observed fingerprint: {fingerprint}. Compare independently, then use Network Diagnostics to review and persist trust."
+    )]
+    HostKeyUnknown {
+        host: String,
+        port: u16,
+        algorithm: String,
+        fingerprint: String,
+    },
+    #[error(
+        "SSH host key CHANGED for {host}:{port} ({algorithm}); observed fingerprint: {fingerprint}. Verify with the administrator; existing trust was not modified."
+    )]
+    HostKeyChanged {
+        host: String,
+        port: u16,
+        algorithm: String,
+        fingerprint: String,
+    },
     #[error("SSH authentication was rejected")]
     AuthenticationRejected,
     #[error("SSH agent authentication failed")]
@@ -628,6 +649,8 @@ pub struct SshHostKeyInspection {
     pub host: String,
     pub port: u16,
     pub fingerprint: String,
+    pub algorithm: String,
+    pub public_key: String,
 }
 
 /// Options for a one-shot host-key inspection. This deliberately has no
@@ -668,12 +691,14 @@ struct ClientHandler {
     policy: HostKeyPolicy,
     inspection_only: bool,
     observed_fingerprint: Arc<Mutex<Option<String>>>,
+    observed_public_key: Arc<Mutex<Option<String>>>,
     forwarded_channels: mpsc::Sender<SshForwardedChannel>,
     x11_channels: mpsc::Sender<SshX11Channel>,
     x11_enabled: bool,
 }
 
 struct ConnectionParts {
+    observed_public_key: Arc<Mutex<Option<String>>>,
     observed_fingerprint: Arc<Mutex<Option<String>>>,
     handler: ClientHandler,
     config: Arc<client::Config>,
@@ -702,20 +727,47 @@ impl client::Handler for ClientHandler {
         *lock_observed_fingerprint(&self.observed_fingerprint) = Some(fingerprint.clone());
 
         if self.inspection_only {
+            *lock_observed_fingerprint(&self.observed_public_key) = Some(public_key.to_openssh()?);
             return Ok(true);
         }
 
         match &self.policy {
-            HostKeyPolicy::PinnedFingerprint(expected) => Ok(expected == &fingerprint),
+            HostKeyPolicy::PinnedFingerprint(expected) if expected == &fingerprint => Ok(true),
+            HostKeyPolicy::PinnedFingerprint(_) => {
+                Err(anyhow::Error::new(SshError::HostKeyChanged {
+                    host: self.host.clone(),
+                    port: self.port,
+                    algorithm: public_key.algorithm().to_string(),
+                    fingerprint,
+                }))
+            }
             HostKeyPolicy::KnownHosts(path) => {
                 match russh::keys::check_known_hosts_path(&self.host, self.port, &public_key, path)
                 {
-                    Ok(trusted) => Ok(trusted),
-                    Err(russh::keys::Error::KeyChanged { .. }) => Ok(false),
+                    Ok(true) => Ok(true),
+                    Ok(false) => Err(anyhow::Error::new(SshError::HostKeyUnknown {
+                        host: self.host.clone(),
+                        port: self.port,
+                        algorithm: public_key.algorithm().to_string(),
+                        fingerprint,
+                    })),
+                    Err(russh::keys::Error::KeyChanged { .. }) => {
+                        Err(anyhow::Error::new(SshError::HostKeyChanged {
+                            host: self.host.clone(),
+                            port: self.port,
+                            algorithm: public_key.algorithm().to_string(),
+                            fingerprint,
+                        }))
+                    }
                     Err(error) => Err(anyhow::Error::new(SshError::KnownHosts(error))),
                 }
             }
-            HostKeyPolicy::RejectUnknown => Ok(false),
+            HostKeyPolicy::RejectUnknown => Err(anyhow::Error::new(SshError::HostKeyUnknown {
+                host: self.host.clone(),
+                port: self.port,
+                algorithm: public_key.algorithm().to_string(),
+                fingerprint,
+            })),
         }
     }
 
@@ -825,6 +877,7 @@ pub async fn inspect_host_key(
     validate_fingerprint_options(&options)?;
     let ConnectionParts {
         observed_fingerprint,
+        observed_public_key,
         handler,
         config,
         ..
@@ -847,7 +900,17 @@ pub async fn inspect_host_key(
     )
     .await;
 
+    let public_key = lock_observed_fingerprint(&observed_public_key)
+        .clone()
+        .ok_or_else(|| SshError::Handshake("SSH server did not present a public key".into()))?;
+    let algorithm = public_key
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_owned();
     Ok(SshHostKeyInspection {
+        algorithm,
+        public_key,
         host: options.host,
         port: options.port,
         fingerprint,
@@ -1074,6 +1137,7 @@ impl SshConnection {
             config,
             forwarded_channels,
             x11_channels,
+            ..
         } = connection_parts(&options);
         let connect = tokio::time::timeout(
             options.timeout,
@@ -1125,6 +1189,7 @@ impl SshConnection {
             config,
             forwarded_channels,
             x11_channels,
+            ..
         } = connection_parts(&options);
         let connect = tokio::time::timeout(
             options.timeout,
@@ -1990,6 +2055,7 @@ fn connection_parts_for(
     x11_enabled: bool,
 ) -> ConnectionParts {
     let observed_fingerprint = Arc::new(Mutex::new(None));
+    let observed_public_key = Arc::new(Mutex::new(None));
     let (forwarded_sender, forwarded_receiver) = mpsc::channel(MAX_QUEUED_FORWARDED_CHANNELS);
     let (x11_sender, x11_receiver) = mpsc::channel(MAX_QUEUED_X11_CHANNELS);
     let handler = ClientHandler {
@@ -1998,6 +2064,7 @@ fn connection_parts_for(
         policy,
         inspection_only,
         observed_fingerprint: Arc::clone(&observed_fingerprint),
+        observed_public_key: Arc::clone(&observed_public_key),
         forwarded_channels: forwarded_sender,
         x11_channels: x11_sender,
         x11_enabled,
@@ -2009,6 +2076,7 @@ fn connection_parts_for(
         ..Default::default()
     });
     ConnectionParts {
+        observed_public_key,
         observed_fingerprint,
         handler,
         config,

@@ -4,6 +4,8 @@
 //! Credential references are safe identifiers; credential material belongs to
 //! `mobarust-vault` and never enters this file.
 
+mod mobaxterm;
+
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -54,15 +56,15 @@ pub enum StoreError {
         #[source]
         source: io::Error,
     },
-    #[error("could not read OpenSSH config")]
+    #[error("could not read selected UTF-8 import file")]
     ImportRead {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
-    #[error("OpenSSH config is too large (maximum 1 MiB)")]
+    #[error("selected import file is too large (maximum 1 MiB)")]
     ImportTooLarge(PathBuf),
-    #[error("OpenSSH config path is not a regular file")]
+    #[error("selected import path is not a regular file")]
     ImportPathUnsafe(PathBuf),
     #[error("settings file contains invalid data")]
     SettingsDecode {
@@ -968,6 +970,7 @@ impl SessionStore {
                 .filter(|seconds| *seconds > 0 && *seconds <= MAX_SERVER_ALIVE_INTERVAL_SECONDS);
             let session = SessionRecord {
                 id: SessionId::new(),
+                terminal_preferences: None,
                 name: alias.clone(),
                 protocol: Protocol::Ssh,
                 hostname,
@@ -1001,6 +1004,47 @@ impl SessionStore {
                 continue;
             }
             imported.push(session);
+        }
+        if !imported.is_empty() {
+            let previous = self.sessions.clone();
+            self.sessions.extend(imported.iter().cloned());
+            if let Err(error) = self.persist() {
+                self.sessions = previous;
+                return Err(error);
+            }
+        }
+        Ok(OpenSshImportReport {
+            source: path.to_string_lossy().into_owned(),
+            imported,
+            skipped_hosts,
+            unsupported_directives,
+        })
+    }
+
+    /// Import user-supplied text bookmarks without reading keys or credentials.
+    pub fn import_mobaxterm_config(
+        &mut self,
+        path: impl Into<PathBuf>,
+    ) -> Result<OpenSshImportReport, StoreError> {
+        let path = path.into();
+        let contents = read_openssh_config(&path)?;
+        let (candidates, mut skipped_hosts, unsupported_directives) = mobaxterm::parse(&contents);
+        let mut imported = Vec::new();
+        for session in candidates {
+            if self
+                .sessions
+                .iter()
+                .chain(imported.iter())
+                .any(|existing: &SessionRecord| {
+                    existing.protocol == session.protocol
+                        && existing.name == session.name
+                        && existing.folder == session.folder
+                })
+            {
+                skipped_hosts.push(format!("{} (already exists)", session.name));
+            } else {
+                imported.push(session);
+            }
         }
         if !imported.is_empty() {
             let previous = self.sessions.clone();
@@ -1515,6 +1559,7 @@ mod tests {
     fn remote_session() -> SessionRecord {
         SessionRecord {
             id: SessionId::new(),
+            terminal_preferences: None,
             name: "Production bastion".into(),
             protocol: Protocol::Ssh,
             hostname: "bastion.example.test".into(),
@@ -2236,6 +2281,35 @@ mod tests {
             Err(StoreError::ImportTooLarge(rejected)) if rejected == path
         ));
         assert!(store.list().is_empty());
+    }
+
+    #[test]
+    fn mobaxterm_import_is_idempotent_secret_free_and_reopens() {
+        let directory = tempdir().unwrap();
+        let input = directory.path().join("bookmarks.ini");
+        fs::write(&input, "[Passwords]\npassword=NEVER_EXPORT_THIS\n[Bookmarks]\nSubRep=Work\nserver=#109#0%host.test%22%alice%%-1%-1%%%%%0%-1%0%%%#\n").unwrap();
+        let path = directory.path().join("sessions.json");
+        let mut store = SessionStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .import_mobaxterm_config(&input)
+                .unwrap()
+                .imported
+                .len(),
+            1
+        );
+        assert!(
+            store
+                .import_mobaxterm_config(&input)
+                .unwrap()
+                .imported
+                .is_empty()
+        );
+        let export = store.export_json().unwrap();
+        assert!(!export.contains("NEVER_EXPORT_THIS"));
+        let reopened = SessionStore::open(&path).unwrap();
+        assert_eq!(reopened.list().len(), 1);
+        assert_eq!(reopened.list()[0].username.as_deref(), Some("alice"));
     }
 
     #[test]

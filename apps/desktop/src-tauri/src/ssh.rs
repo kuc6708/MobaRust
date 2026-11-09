@@ -2664,11 +2664,18 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for TunnelStream<S> {
         let this = self.get_mut();
         match Pin::new(&mut this.stream).poll_write(cx, buffer) {
             Poll::Ready(Ok(written)) => {
-                let _ = this
-                    .bytes
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |bytes| {
-                        Some(bytes.saturating_add(written as u64))
-                    });
+                let mut previous = this.bytes.load(Ordering::Relaxed);
+                loop {
+                    match this.bytes.compare_exchange_weak(
+                        previous,
+                        previous.saturating_add(written as u64),
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => break,
+                        Err(current) => previous = current,
+                    }
+                }
                 Poll::Ready(Ok(written))
             }
             result => result,

@@ -1,3 +1,5 @@
+import { parseTerminalPreferences, resolveTerminalPreferences, type TerminalPreferences } from "./terminal-preferences";
+import { reviewUnknownHostTrust } from "./host-trust";
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { RemoteFramebufferQueue } from "./remote-desktop-framebuffer";
@@ -299,6 +301,8 @@ type WorkspaceTerminal = {
   remoteDesktopRequest?: RemoteDesktopConnectRequest | null;
   remoteHost: string | null;
   status: TerminalStatus;
+  terminalPreferences?: TerminalPreferences | null;
+  terminalFontSizeOverride?: number;
 };
 
 type SplitDirection = "none" | "right" | "down";
@@ -397,6 +401,7 @@ type SessionListItem = {
 
 type SavedSession = {
   id: string;
+  terminal_preferences?: TerminalPreferences | null;
   name: string;
   protocol: string;
   hostname: string;
@@ -701,6 +706,8 @@ type SshHostKeyInspection = {
   host: string;
   port: number;
   fingerprint: string;
+  algorithm: string;
+  publicKey: string;
 };
 
 type NetworkScanEvent = {
@@ -780,6 +787,7 @@ function TerminalViewport({ label, colorTheme, workspaceId, instanceKey, remoteS
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalIdRef = useRef<string | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<(() => void) | null>(null);
   const terminalOptionsRef = useRef({ fontSize, scrollbackLines, cursorBlink, colorTheme });
   const confirmMultilinePasteRef = useRef(confirmMultilinePaste);
 
@@ -788,7 +796,10 @@ function TerminalViewport({ label, colorTheme, workspaceId, instanceKey, remoteS
     if (terminalRef.current) {
       terminalRef.current.options.fontSize = fontSize;
       terminalRef.current.options.cursorBlink = cursorBlink;
+      terminalRef.current.options.scrollback = scrollbackLines;
       terminalRef.current.options.theme = terminalThemes[colorTheme];
+      const frame = window.requestAnimationFrame(() => fitRef.current?.());
+      return () => window.cancelAnimationFrame(frame);
     }
   }, [colorTheme, cursorBlink, fontSize, scrollbackLines]);
 
@@ -858,6 +869,7 @@ function TerminalViewport({ label, colorTheme, workspaceId, instanceKey, remoteS
       }
     };
 
+    fitRef.current = fit;
     const resizeObserver = new ResizeObserver(fit);
     resizeObserver.observe(host);
     const initialFitFrame = window.requestAnimationFrame(fit);
@@ -1029,6 +1041,7 @@ function TerminalViewport({ label, colorTheme, workspaceId, instanceKey, remoteS
       }
       terminalIdRef.current = null;
       terminalRef.current = null;
+      fitRef.current = null;
       onTerminalDisposed(workspaceId);
       terminal.dispose();
     };
@@ -1633,13 +1646,14 @@ function App() {
     }
   }, [activeTerminal, activeTerminalId, terminalLayout]);
 
-  const startNewTerminal = useCallback((target: LocalTerminalTarget = { type: "default" }, label?: string) => {
+  const startNewTerminal = useCallback((target: LocalTerminalTarget = { type: "default" }, label?: string, terminalPreferences?: TerminalPreferences | null) => {
     const shellLabel = target.type === "default" && target.shell && target.shell !== "default"
       ? target.shell === "powershell" ? "PowerShell" : target.shell
       : "local shell";
     const terminal = createWorkspaceTerminal({
       label: label ?? (target.type === "wsl" ? `WSL · ${target.distribution}` : shellLabel),
       localTarget: target,
+      terminalPreferences,
     });
     setTerminalTabs((current) => [...current, terminal]);
     setActiveTerminalId(terminal.id);
@@ -2236,6 +2250,13 @@ function App() {
   };
 
   const adjustTerminalFontSize = useCallback((action: "increase" | "decrease" | "reset") => {
+    const active = terminalTabsRef.current.find((terminal) => terminal.id === selectedTerminalIdRef.current);
+    if (active?.terminalPreferences) {
+      const size = action === "reset" ? undefined : terminalFontSizeAfterZoom(active.terminalFontSizeOverride ?? active.terminalPreferences.fontSize, action);
+      setTerminalTabs((current) => current.map((terminal) => terminal.id === active.id ? { ...terminal, terminalFontSizeOverride: size } : terminal));
+      setSessionNotice(`Pane font size: ${size ?? active.terminalPreferences.fontSize}px. Saved preferences are unchanged.`);
+      return;
+    }
     const current = settingsRef.current;
     const fontSize = terminalFontSizeAfterZoom(current.appearance.fontSize, action);
     if (fontSize === current.appearance.fontSize) return;
@@ -2431,7 +2452,7 @@ function App() {
     }
   }, []);
 
-  const connectSsh = useCallback(async (request: SshConnectRequest, offerSave = true) => {
+  const connectSsh = useCallback(async (request: SshConnectRequest, offerSave = true, terminalPreferences?: TerminalPreferences | null) => {
     setConnectionError(null);
     setSessionNotice(null);
     if (!IS_TAURI) {
@@ -2458,6 +2479,7 @@ function App() {
       });
       recordAudit("sessionOpened", "SSH");
       const terminal = createWorkspaceTerminal({
+        terminalPreferences,
         label: `${request.username}@${response.host}`,
         remoteSessionId: response.terminalId,
         remoteProtocol: "ssh",
@@ -2487,7 +2509,7 @@ function App() {
     }
   }, [recordAudit, refreshSavedSessions, requestTerminalFocus]);
 
-  const connectTelnet = useCallback(async (request: TelnetConnectRequest, offerSave = true) => {
+  const connectTelnet = useCallback(async (request: TelnetConnectRequest, offerSave = true, terminalPreferences?: TerminalPreferences | null) => {
     setConnectionError(null);
     setSessionNotice(null);
     if (!IS_TAURI) {
@@ -2498,6 +2520,7 @@ function App() {
       const response = await invoke<TelnetConnectResponse>("telnet_connect", { request });
       recordAudit("sessionOpened", "TELNET");
       const terminal = createWorkspaceTerminal({
+        terminalPreferences,
         label: `Telnet · ${response.host}`,
         remoteSessionId: response.terminalId,
         remoteProtocol: "telnet",
@@ -2527,7 +2550,7 @@ function App() {
     }
   }, [recordAudit, refreshSavedSessions]);
 
-  const connectSerial = useCallback(async (request: SerialConnectRequest, offerSave = true) => {
+  const connectSerial = useCallback(async (request: SerialConnectRequest, offerSave = true, terminalPreferences?: TerminalPreferences | null) => {
     setConnectionError(null);
     setSessionNotice(null);
     if (!IS_TAURI) {
@@ -2538,6 +2561,7 @@ function App() {
       const response = await invoke<SerialConnectResponse>("serial_connect", { request });
       recordAudit("sessionOpened", "SERIAL");
       const terminal = createWorkspaceTerminal({
+        terminalPreferences,
         label: `Serial · ${response.device}`,
         remoteSessionId: response.terminalId,
         remoteProtocol: "serial",
@@ -2599,6 +2623,19 @@ function App() {
       }
     }
   }, [recordAudit, refreshSavedSessions]);
+
+  const importMobaXtermConfig = useCallback(async () => {
+    if (!IS_TAURI) return;
+    const path = await promptText("MobaXterm .ini or .mxtsessions file path. Only SSH bookmark fields are imported. No connections will be opened.", "");
+    if (!path?.trim()) return;
+    try {
+      const report = await invoke<OpenSshImportReport>("session_import_mobaxterm", { payload: { path: path.trim() } });
+      refreshSavedSessions();
+      const details = [...report.skippedHosts, ...report.unsupportedDirectives];
+      setSessionNotice({ message: `Imported ${report.imported.length} MobaXterm SSH sessions. Review authentication and host trust before connecting.`, details: details.slice(0, 20), total: details.length });
+      setConnectionError(null);
+    } catch (error) { setConnectionError(String(error)); }
+  }, [refreshSavedSessions]);
 
   const importOpenSshConfig = useCallback(async () => {
     if (!IS_TAURI) return;
@@ -2689,7 +2726,7 @@ function App() {
       cwd: session.startup_directory?.trim() ? session.startup_directory : undefined,
       environment: session.environment?.length ? session.environment : undefined,
       startupCommand: startupCommand || undefined,
-    }, session.name);
+    }, session.name, session.terminal_preferences);
     setSessionNotice(`Opened local profile ${session.name}.`);
   }, [recordAudit, startNewTerminal, touchSavedSession]);
 
@@ -2736,7 +2773,7 @@ function App() {
         encoding: profile.encoding,
         columns: profile.columns,
         rows: profile.rows,
-      }, false);
+      }, false, session.terminal_preferences);
     }
     if (session.protocol === "SERIAL") {
       const profile = session.serial_profile;
@@ -2752,7 +2789,7 @@ function App() {
         parity: profile.parity,
         flowControl: profile.flow_control,
         lineEnding: profile.line_ending,
-      }, false);
+      }, false, session.terminal_preferences);
     }
     if (session.protocol === "RDP" || session.protocol === "VNC") {
       const profile = session.remote_desktop_profile;
@@ -2792,7 +2829,7 @@ function App() {
       setConnectionError("This SSH profile has incomplete authentication or an unresolved, cyclic, or oversized jump chain (maximum 8 hosts).");
       return;
     }
-    return connectSsh(request, false);
+    return connectSsh(request, false, session.terminal_preferences);
   }, [connectRemoteDesktop, connectSerial, connectSsh, connectTelnet, openSavedLocalSession, recordAudit, savedSessions, touchSavedSession]);
 
   const writeToExplicitTargets = useCallback(async (targets: MacroTargetBinding[], data: string) => {
@@ -3466,6 +3503,23 @@ function App() {
     }
   }, [networkHost, networkPort, networkTimeout]);
 
+  const trustNetworkHostKey = useCallback(async () => {
+    const observed = networkFingerprint;
+    if (!observed || !IS_TAURI) return;
+    try {
+      const path = await reviewUnknownHostTrust(observed, {
+        choosePath: () => promptText("Absolute known_hosts file path. Select this same file in your SSH session settings. Its directory must already exist.", ""),
+        confirm: confirmAction,
+        persist: (request) => invoke("ssh_trust_unknown_host_key", { request }),
+      });
+      if (!path) return;
+      setNetworkError(null);
+      await promptText("Host key saved. Select this known_hosts file in your SSH session before reconnecting.", path.trim(), { readOnly: true });
+    } catch (error) {
+      setNetworkError(String(error));
+    }
+  }, [networkFingerprint]);
+
   const cancelNetworkDiagnosticId = useCallback(async (operationId: string) => {
     try {
       await invoke("network_diagnostic_cancel", { operationId });
@@ -3965,8 +4019,9 @@ function App() {
   const activeTunnelCount = tunnels.filter((tunnel) => !["stopped", "failed"].includes(tunnel.state)).length;
 
   const renderTerminalPane = useCallback((terminal: WorkspaceTerminal) => {
+    const preferences = resolveTerminalPreferences({ fontSize: settings.appearance.fontSize, scrollbackLines: settings.terminal.scrollbackLines, cursorBlink: settings.terminal.cursorBlink }, terminal.terminalPreferences);
     const isDesktop = (terminal.remoteProtocol === "rdp" || terminal.remoteProtocol === "vnc") && terminal.remoteDesktopRequest;
-    return isDesktop ? <RemoteDesktopViewport workspaceId={terminal.id} instanceKey={terminal.instanceKey} request={terminal.remoteDesktopRequest!} onStatusChange={handleTerminalStatus} onNativeTerminalId={handleNativeTerminalId} /> : <TerminalViewport label={terminal.label} colorTheme={colorTheme} workspaceId={terminal.id} instanceKey={terminal.instanceKey} remoteSessionId={terminal.remoteSessionId} remoteProtocol={terminal.remoteProtocol} localTarget={terminal.localTarget} fontSize={settings.appearance.fontSize} scrollbackLines={settings.terminal.scrollbackLines} cursorBlink={settings.terminal.cursorBlink} confirmMultilinePaste={settings.general.confirmMultilinePaste} onStatusChange={handleTerminalStatus} onNativeTerminalId={handleNativeTerminalId} onInput={handleTerminalInput} onTerminalPaste={handleTerminalPaste} onTerminalReady={handleTerminalReady} onTerminalDisposed={handleTerminalDisposed} onSearchResults={handleSearchResults} onTitleChange={handleTerminalTitle} onBell={handleTerminalBell} />;
+    return isDesktop ? <RemoteDesktopViewport workspaceId={terminal.id} instanceKey={terminal.instanceKey} request={terminal.remoteDesktopRequest!} onStatusChange={handleTerminalStatus} onNativeTerminalId={handleNativeTerminalId} /> : <TerminalViewport label={terminal.label} colorTheme={colorTheme} workspaceId={terminal.id} instanceKey={terminal.instanceKey} remoteSessionId={terminal.remoteSessionId} remoteProtocol={terminal.remoteProtocol} localTarget={terminal.localTarget} fontSize={terminal.terminalFontSizeOverride ?? preferences.fontSize} scrollbackLines={preferences.scrollbackLines} cursorBlink={preferences.cursorBlink} confirmMultilinePaste={settings.general.confirmMultilinePaste} onStatusChange={handleTerminalStatus} onNativeTerminalId={handleNativeTerminalId} onInput={handleTerminalInput} onTerminalPaste={handleTerminalPaste} onTerminalReady={handleTerminalReady} onTerminalDisposed={handleTerminalDisposed} onSearchResults={handleSearchResults} onTitleChange={handleTerminalTitle} onBell={handleTerminalBell} />;
   }, [colorTheme, handleTerminalPaste, handleNativeTerminalId, handleSearchResults, handleTerminalBell, handleTerminalDisposed, handleTerminalInput, handleTerminalReady, handleTerminalStatus, handleTerminalTitle, settings.appearance.fontSize, settings.general.confirmMultilinePaste, settings.terminal.cursorBlink, settings.terminal.scrollbackLines]);
 
   if (closing) return <main className={`app-shell shutdown-state theme-${colorTheme}`}><section role="status" aria-live="polite"><LoaderCircle className="spin" size={24} aria-hidden="true" /><h1>Closing MobaRust</h1><p>Closing local terminals and finishing SSH file cleanup before exiting.</p></section></main>;
@@ -4042,7 +4097,7 @@ function App() {
           </nav>
 
           <div className="session-list">
-            <div className="list-heading"><span>{recentOnly ? "Recent sessions" : favoritesOnly ? "Favorite sessions" : "Sessions"}</span><span className="list-actions"><button aria-label="Import OpenSSH config" title="Import OpenSSH config" onClick={importOpenSshConfig}><Upload size={14} /></button><button aria-label="Import MobaRust session export" title="Import MobaRust session export" onClick={importSessions}><ArrowDownToLine size={14} /></button><button aria-label="Export MobaRust sessions" title="Export secret-free session definitions" onClick={exportSessions}><ArrowUpFromLine size={14} /></button></span></div>
+            <div className="list-heading"><span>{recentOnly ? "Recent sessions" : favoritesOnly ? "Favorite sessions" : "Sessions"}</span><span className="list-actions"><button aria-label="Import MobaXterm bookmarks" title="Import MobaXterm bookmarks" onClick={importMobaXtermConfig}><Upload size={14} /><span>MXT</span></button><button aria-label="Import OpenSSH config" title="Import OpenSSH config" onClick={importOpenSshConfig}><Upload size={14} /></button><button aria-label="Import MobaRust session export" title="Import MobaRust session export" onClick={importSessions}><ArrowDownToLine size={14} /></button><button aria-label="Export MobaRust sessions" title="Export secret-free session definitions" onClick={exportSessions}><ArrowUpFromLine size={14} /></button></span></div>
             {sessionListError && <div className="connect-error" role="alert"><span>{sessionListError}</span><button type="button" className="outline-button" onClick={refreshSavedSessions}>Retry</button></div>}
             <div className="folder-heading"><ChevronDown size={13} /> Local terminals <span>{localSessionCount}</span></div>
             {filteredSessions.filter((session) => session.type === "LOCAL").map((session) => (
@@ -4164,7 +4219,7 @@ function App() {
               ) : activeView === "audit" ? (
                 <AuditHistoryView events={auditEvents} onClear={() => void clearAudit()} />
               ) : activeView === "diagnostics" ? (
-                <NetworkDiagnosticsView host={networkHost} port={networkPort} timeout={networkTimeout} status={networkStatus} addresses={networkAddresses} result={networkResult} fingerprint={networkFingerprint} error={networkError} scanId={networkScanId} scanStatus={networkScanStatus} scanStart={networkScanStart} scanEnd={networkScanEnd} scanConcurrency={networkScanConcurrency} scanScanned={networkScanScanned} scanTotal={networkScanTotal} scanResults={networkScanResults} diagnosticKind={networkDiagnosticKind} diagnosticStatus={networkDiagnosticStatus} pingResult={networkPingResult} tracerouteResult={networkTracerouteResult} traceMaxHops={networkTraceMaxHops} onHostChange={setNetworkHost} onPortChange={setNetworkPort} onTimeoutChange={setNetworkTimeout} onTraceMaxHopsChange={setNetworkTraceMaxHops} onResolve={resolveNetworkHost} onCheckTcp={checkNetworkTcp} onInspectFingerprint={inspectNetworkHostKey} onPing={startNetworkPing} onTraceroute={startNetworkTraceroute} onCancelDiagnostic={cancelNetworkDiagnostic} onScanStartChange={setNetworkScanStart} onScanEndChange={setNetworkScanEnd} onScanConcurrencyChange={setNetworkScanConcurrency} onStartScan={startNetworkScan} onCancelScan={cancelNetworkScan} />
+                <NetworkDiagnosticsView host={networkHost} port={networkPort} timeout={networkTimeout} status={networkStatus} addresses={networkAddresses} result={networkResult} fingerprint={networkFingerprint} error={networkError} scanId={networkScanId} scanStatus={networkScanStatus} scanStart={networkScanStart} scanEnd={networkScanEnd} scanConcurrency={networkScanConcurrency} scanScanned={networkScanScanned} scanTotal={networkScanTotal} scanResults={networkScanResults} diagnosticKind={networkDiagnosticKind} diagnosticStatus={networkDiagnosticStatus} pingResult={networkPingResult} tracerouteResult={networkTracerouteResult} traceMaxHops={networkTraceMaxHops} onHostChange={setNetworkHost} onPortChange={setNetworkPort} onTimeoutChange={setNetworkTimeout} onTraceMaxHopsChange={setNetworkTraceMaxHops} onResolve={resolveNetworkHost} onCheckTcp={checkNetworkTcp} onInspectFingerprint={inspectNetworkHostKey} onTrustFingerprint={trustNetworkHostKey} onPing={startNetworkPing} onTraceroute={startNetworkTraceroute} onCancelDiagnostic={cancelNetworkDiagnostic} onScanStartChange={setNetworkScanStart} onScanEndChange={setNetworkScanEnd} onScanConcurrencyChange={setNetworkScanConcurrency} onStartScan={startNetworkScan} onCancelScan={cancelNetworkScan} />
               ) : activeView === "terminal" ? null : (
                 <EmptyProtocolView view={activeView} onAction={activeView === "tunnels" || activeView === "monitor" ? () => setQuickConnectOpen(true) : undefined} />
               )}
@@ -4612,7 +4667,7 @@ function MonitorMetric({ label, value, detail }: { label: string; value: string;
   return <article className="remote-monitor-card"><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>;
 }
 
-function NetworkDiagnosticsView({ host, port, timeout, status, addresses, result, fingerprint, error, scanId, scanStatus, scanStart, scanEnd, scanConcurrency, scanScanned, scanTotal, scanResults, diagnosticKind, diagnosticStatus, pingResult, tracerouteResult, traceMaxHops, onHostChange, onPortChange, onTimeoutChange, onTraceMaxHopsChange, onResolve, onCheckTcp, onInspectFingerprint, onPing, onTraceroute, onCancelDiagnostic, onScanStartChange, onScanEndChange, onScanConcurrencyChange, onStartScan, onCancelScan }: {
+function NetworkDiagnosticsView({ host, port, timeout, status, addresses, result, fingerprint, error, scanId, scanStatus, scanStart, scanEnd, scanConcurrency, scanScanned, scanTotal, scanResults, diagnosticKind, diagnosticStatus, pingResult, tracerouteResult, traceMaxHops, onHostChange, onPortChange, onTimeoutChange, onTraceMaxHopsChange, onResolve, onCheckTcp, onInspectFingerprint, onTrustFingerprint, onPing, onTraceroute, onCancelDiagnostic, onScanStartChange, onScanEndChange, onScanConcurrencyChange, onStartScan, onCancelScan }: {
   host: string;
   port: string;
   timeout: string;
@@ -4641,6 +4696,7 @@ function NetworkDiagnosticsView({ host, port, timeout, status, addresses, result
   onResolve: () => void;
   onCheckTcp: () => void;
   onInspectFingerprint: () => void;
+  onTrustFingerprint: () => void;
   onPing: () => void;
   onTraceroute: () => void;
   onCancelDiagnostic: () => void;
@@ -4670,7 +4726,7 @@ function NetworkDiagnosticsView({ host, port, timeout, status, addresses, result
     <div className="diagnostics-results">
       <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">DNS / ADDRESSES</span><Search size={15} /></div><h3>{addresses.length > 0 ? `${addresses.length} address${addresses.length === 1 ? "" : "es"}` : "No lookup yet"}</h3>{addresses.length > 0 ? <div className="diagnostic-addresses">{addresses.map((address) => <code key={address}>{address}</code>)}</div> : <p>Enter a target and run an explicit lookup. Results are kept in this view only.</p>}</article>
       <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">TCP / REACHABILITY</span><Network size={15} /></div>{result ? <><h3>{result.host}:{result.port}</h3><div className={`diagnostic-result diagnostic-result-${result.status}`}><span /> {result.status === "open" ? "Open" : result.status === "closed" ? "Closed" : result.status === "timed-out" ? "Timed out" : "Failed"}</div><p>The result describes TCP reachability only; it does not authenticate or identify the service.</p></> : <><h3>No TCP check yet</h3><p>Choose a port explicitly, then run a bounded connection check.</p></>}</article>
-      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">SSH / HOST KEY</span><KeyRound size={15} /></div>{fingerprint ? <><h3>{fingerprint.host}:{fingerprint.port}</h3><div className="diagnostic-fingerprint"><code>{fingerprint.fingerprint}</code></div><p>Observed during one unauthenticated SSH handshake. Nothing was added to known_hosts.</p></> : <><h3>No SSH key observed</h3><p>Inspect an explicit SSH target to read its server fingerprint without using credentials.</p></>}</article>
+      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">SSH / HOST KEY</span><KeyRound size={15} /></div>{fingerprint ? <><h3>{fingerprint.host}:{fingerprint.port}</h3><div className="diagnostic-fingerprint"><code>{fingerprint.algorithm} · {fingerprint.fingerprint}</code></div><p>Observed during one unauthenticated SSH handshake. Nothing was added to known_hosts.</p><button className="outline-button" onClick={onTrustFingerprint} disabled={status === "running"}>Review and trust unknown key…</button></> : <><h3>No SSH key observed</h3><p>Inspect an explicit SSH target to read its server fingerprint without using credentials.</p></>}</article>
       <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">ICMP / PING</span><Radio size={15} /></div>{pingResult ? <><h3>{pingResult.reachable ? "Reachable" : "No reply"}</h3><div className={`diagnostic-result ${pingResult.reachable ? "diagnostic-result-open" : "diagnostic-result-closed"}`}><span /> {pingResult.elapsedMs} ms observed</div><p>One platform-native echo request was sent to the explicit target.</p></> : <><h3>No ping yet</h3><p>Ping uses one bounded platform-native probe and can be cancelled.</p></>}</article>
       <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">PATH / TRACEROUTE</span><Activity size={15} /></div>{tracerouteResult ? <><h3>{tracerouteResult.reached ? "Destination reached" : "Path incomplete"}</h3><div className={`diagnostic-result ${tracerouteResult.reached ? "diagnostic-result-open" : "diagnostic-result-timed-out"}`}><span /> {tracerouteResult.hops.length} hop lines · {tracerouteResult.elapsedMs} ms</div><pre className="diagnostic-hops">{tracerouteResult.hops.length > 0 ? tracerouteResult.hops.join("\n") : "No hop output returned."}</pre></> : <><h3>No route trace yet</h3><p>Traceroute is bounded to the selected maximum hops and timeout.</p></>}</article>
     </div>
@@ -5094,7 +5150,18 @@ function SnippetForm({ snippet, isNew, onSave, onDelete, onCopy }: { snippet: Sn
 }
 
 function SessionEditor({ session, onClose, onSave }: { session: SavedSession; onClose: () => void; onSave: (session: SavedSession) => void }) {
+  const [preferencesEnabled, setPreferencesEnabled] = useState(Boolean(session.terminal_preferences));
+  const [profileFont, setProfileFont] = useState(String(session.terminal_preferences?.fontSize ?? 13));
+  const [profileScrollback, setProfileScrollback] = useState(String(session.terminal_preferences?.scrollbackLines ?? 5000));
+  const [profileBlink, setProfileBlink] = useState(session.terminal_preferences?.cursorBlink ?? true);
   const [name, setName] = useState(session.name);
+  const [hostname, setHostname] = useState(session.hostname);
+  const [username, setUsername] = useState(session.username ?? "");
+  const [sshPort, setSshPort] = useState(String(session.port));
+  const [trustPath, setTrustPath] = useState(session.known_hosts_path ?? "");
+  const [trustPin, setTrustPin] = useState(session.pinned_fingerprint ?? "");
+  const [jumpProfiles, setJumpProfiles] = useState<SavedJumpHost[]>(session.jump_host_profiles ?? []);
+
   const [folder, setFolder] = useState(session.folder ?? "");
   const [tags, setTags] = useState(session.tags.join(", "));
   const [startupDirectory, setStartupDirectory] = useState(session.startup_directory ?? "");
@@ -5135,6 +5202,11 @@ function SessionEditor({ session, onClose, onSave }: { session: SavedSession; on
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedTags = [...new Set(tags.split(",").map((tag) => tag.trim()).filter(Boolean))];
+    let terminalPreferences = session.terminal_preferences ?? null;
+    if (!isRemoteDesktop) {
+      try { terminalPreferences = preferencesEnabled ? parseTerminalPreferences(profileFont, profileScrollback, profileBlink) : null; }
+      catch (error) { setAuthError(String(error)); return; }
+    }
     let auth = session.auth;
     let environment = session.environment ?? [];
     if (supportsStartup || isRemoteDesktop) setAuthError(null);
@@ -5147,6 +5219,15 @@ function SessionEditor({ session, onClose, onSave }: { session: SavedSession; on
       }
     }
     if (isSsh) {
+      if (!hostname.trim() || Array.from(hostname.trim()).some((character) => /\s/u.test(character) || character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) || !Number.isInteger(Number(sshPort)) || Number(sshPort) < 1 || Number(sshPort) > 65535) {
+        setAuthError("Enter a host without whitespace and a port between 1 and 65535.");
+        return;
+      }
+      if ((trustPath.trim() && trustPin.trim()) || jumpProfiles.some((hop) => hop.known_hosts_path?.trim() && hop.pinned_fingerprint?.trim())) {
+        setAuthError("Choose a known_hosts file or a fingerprint pin for each endpoint, rather than both.");
+        return;
+      }
+
       const parsedServerAliveInterval = Number(serverAliveInterval);
       if (!Number.isInteger(parsedServerAliveInterval) || parsedServerAliveInterval < 0 || parsedServerAliveInterval > MAX_SERVER_ALIVE_INTERVAL_SECONDS) {
         setAuthError(`ServerAliveInterval must be between 0 and ${MAX_SERVER_ALIVE_INTERVAL_SECONDS} seconds.`);
@@ -5193,6 +5274,14 @@ function SessionEditor({ session, onClose, onSave }: { session: SavedSession; on
     onSave({
       ...session,
       name: name.trim(),
+      terminal_preferences: terminalPreferences,
+      hostname: isSsh ? hostname.trim() : session.hostname,
+      username: isSsh ? username.trim() || null : session.username,
+      port: isSsh ? Number(sshPort) : session.port,
+      known_hosts_path: isSsh ? trustPath.trim() || null : session.known_hosts_path,
+      pinned_fingerprint: isSsh ? trustPin.trim() || null : session.pinned_fingerprint,
+      jump_host_profiles: isSsh ? jumpProfiles : session.jump_host_profiles,
+
       folder: folder.trim() || null,
       tags: normalizedTags,
       favorite,
@@ -5329,8 +5418,31 @@ function SessionEditor({ session, onClose, onSave }: { session: SavedSession; on
           {authError && <div className="connect-error-inline" role="alert">{authError}</div>}
         </div>}
 
+        {!isRemoteDesktop && <div className="session-editor-auth">
+          <span className="settings-section-label">Terminal preferences</span>
+          <div className="session-editor-grid">
+            <label className="quick-connect-wide quick-connect-check-row"><input type="checkbox" checked={preferencesEnabled} onChange={(event) => setPreferencesEnabled(event.target.checked)} /><span>Use preferences for this profile <small>Applied when opening the profile; otherwise global settings apply.</small></span></label>
+            <label>Font size<input type="number" min="8" max="32" step="1" value={profileFont} disabled={!preferencesEnabled} onChange={(event) => setProfileFont(event.target.value)} /></label>
+            <label>Scrollback lines<input type="number" min="100" max="100000" step="1" value={profileScrollback} disabled={!preferencesEnabled} onChange={(event) => setProfileScrollback(event.target.value)} /></label>
+            <label className="quick-connect-wide quick-connect-check-row"><input type="checkbox" checked={profileBlink} disabled={!preferencesEnabled} onChange={(event) => setProfileBlink(event.target.checked)} /><span>Blink cursor</span></label>
+          </div>
+        </div>}
+
         {isSsh && <div className="session-editor-auth">
           <span className="settings-section-label">SSH authentication</span>
+          <div className="session-editor-grid">
+            <label>SSH host<input required value={hostname} onChange={(event) => setHostname(event.target.value)} /></label>
+            <label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} /></label>
+            <label>SSH port<input type="number" min="1" max="65535" value={sshPort} onChange={(event) => setSshPort(event.target.value)} /></label>
+            <label className="quick-connect-wide">Known hosts file<input value={trustPath} onChange={(event) => setTrustPath(event.target.value)} /><small>Explicit trust file only; leaving both trust fields empty rejects unknown keys.</small></label>
+            <label className="quick-connect-wide">SHA256 fingerprint pin<input value={trustPin} onChange={(event) => setTrustPin(event.target.value)} placeholder="SHA256:…" /><small>Verify this fingerprint through an independent channel.</small></label>
+            {jumpProfiles.map((hop, index) => <div className="quick-connect-wide" key={index}>
+              <strong>Bastion {index + 1}: {hop.username}@{hop.host}:{hop.port}</strong>
+              <label>Known hosts file<input value={hop.known_hosts_path ?? ""} onChange={(event) => setJumpProfiles((current) => current.map((item, position) => position === index ? { ...item, known_hosts_path: event.target.value || null } : item))} /></label>
+              <label>SHA256 fingerprint pin<input value={hop.pinned_fingerprint ?? ""} onChange={(event) => setJumpProfiles((current) => current.map((item, position) => position === index ? { ...item, pinned_fingerprint: event.target.value || null } : item))} /></label>
+            </div>)}
+          </div>
+
           <div className="session-editor-grid">
             <label className="quick-connect-wide">
               ServerAliveInterval <span className="optional">optional · seconds</span>
@@ -5367,6 +5479,7 @@ function SessionEditor({ session, onClose, onSave }: { session: SavedSession; on
           <div className="credential-modal-note"><ShieldCheck size={14} /><span>No password, passphrase, private-key bytes, or agent material is displayed or persisted here.</span></div>
         </div>}
 
+        {authError && !isSsh && !isRemoteDesktop && <div className="connect-error-inline" role="alert">{authError}</div>}
         <div className="session-editor-footer">
           <button type="button" className={`favorite-toggle ${favorite ? "selected" : ""}`} onClick={() => setFavorite((value) => !value)}><Star size={14} fill={favorite ? "currentColor" : "none"} /> {favorite ? "Favorite" : "Add to favorites"}</button>
           <div><button type="button" className="outline-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button"><CheckCircle2 size={14} /> Save changes</button></div>

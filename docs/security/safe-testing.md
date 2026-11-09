@@ -21,6 +21,12 @@ configuration.
   their temporary authority file. Changing the daemon's HOME alone would not
   isolate the remote shell, since sshd normally obtains its home from the OS
   account database.
+  They now also use a fixed ForceCommand wrapper, `SHLVL=2`, and a clean
+  `/usr/bin/env -i` environment before entering `/bin/sh`. SetEnv alone did not
+  prevent login-shell startup scripts from running. The forced non-login shell
+  avoids that path and Bash's noninteractive SSH `.bashrc` behavior. SFTP uses
+  the installed external server with an explicit disposable starting directory.
+  Generated hostile startup files verify that fixture shells never source them.
 - OpenSSH import requires an explicit path and never falls back to
   `~/.ssh/config`; tests and development runs must use a repository fixture or
   an isolated temporary file.
@@ -45,6 +51,8 @@ configuration.
   `.Xauthority`, use a personal display, open a TCP listener, create a system
   directory, or change its permissions. If the system directory is absent or
   is not a real directory, the optional fixture skips cleanly.
+  Its Unix directory must also have sticky 1777 permissions; an unsafe directory
+  is an unavailable prerequisite. Such a skip is not real-X11 acceptance.
 - Serial tests use configuration plus a disposable Unix pseudo-terminal
   fixture. They never enumerate host ports or open a physical adapter;
   hardware interoperability requires a separate, explicit manual test

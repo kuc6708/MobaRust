@@ -34,11 +34,12 @@ test('release rejects inconsistent versions', () => fixture(({ put, invoke }) =>
   assert.notEqual(invoke('check-version').status, 0);
 }));
 
-test('Linux release requires both installers and hashes the delivered bytes', () => fixture(({ cwd, put, invoke }) => {
+test('Linux release requires all three installers and hashes the delivered bytes', () => fixture(({ cwd, put, invoke }) => {
   put('apps/desktop/src-tauri/helpers/mobarust-vnc-helper', 'helper');
   put('target/release/bundle/deb/MobaRust_0.1.0_amd64.deb', 'debian-package');
   assert.notEqual(invoke('collect', 'linux-x64').status, 0);
   put('target/release/bundle/appimage/MobaRust_0.1.0_amd64.AppImage', 'appimage-package');
+  put('target/release/bundle/rpm/MobaRust-0.1.0-1.x86_64.rpm', 'rpm-package');
   assert.equal(invoke('collect', 'linux-x64').status, 0);
   const manifest = readFileSync(join(cwd, 'target/release-assets/SHA256SUMS-linux-x64.txt'), 'utf8');
   for (const line of manifest.trim().split('\n')) {
@@ -60,16 +61,33 @@ test('Windows collector preserves installer bytes and hashes the delivered file'
     `${createHash('sha256').update('windows-package').digest('hex')}  ${name}\n`);
 }));
 
+test('ARM64 collectors preserve architecture labels and checksum delivered bytes', () => {
+  for (const [platform, names] of Object.entries({
+    'windows-arm64': ['MobaRust_0.1.0_arm64-setup.exe'],
+    'linux-arm64': ['MobaRust_0.1.0_arm64.deb', 'MobaRust_0.1.0_aarch64.AppImage', 'MobaRust-0.1.0-1.aarch64.rpm'],
+  })) fixture(({ cwd, put, invoke }) => {
+    put(`apps/desktop/src-tauri/helpers/mobarust-vnc-helper${platform.startsWith('windows') ? '.exe' : ''}`, 'helper');
+    for (const name of names) put(`target/release/bundle/${name}`, `bytes:${name}`);
+    assert.equal(invoke('collect', platform).status, 0);
+    const manifest = readFileSync(join(cwd, `target/release-assets/SHA256SUMS-${platform}.txt`), 'utf8');
+    for (const line of manifest.trim().split('\n')) {
+      const [hash, name] = line.split('  ');
+      assert.ok(name.includes(platform));
+      assert.equal(hash, createHash('sha256').update(readFileSync(join(cwd, 'target/release-assets', name))).digest('hex'));
+    }
+  });
+});
+
 test('collector rejects source product, version and architecture mismatches before writing', () => {
   const packages = {
     'windows-x64': ['MobaRust_0.1.0_x64-setup.exe'],
-    'linux-x64': ['MobaRust_0.1.0_amd64.deb', 'MobaRust_0.1.0_amd64.AppImage'],
+    'linux-x64': ['MobaRust_0.1.0_amd64.deb', 'MobaRust_0.1.0_amd64.AppImage', 'MobaRust-0.1.0-1.x86_64.rpm'],
     'macos-arm64': ['MobaRust_0.1.0_aarch64.dmg'],
     'macos-x64': ['MobaRust_0.1.0_x64.dmg'],
   };
   for (const [platform, names] of Object.entries(packages)) {
     for (const name of names) {
-      const wrongArch = name.replace(/amd64|aarch64|x64/, platform === 'macos-arm64' ? 'x64'
+      const wrongArch = name.replace(/amd64|aarch64|x86_64|x64/, platform === 'macos-arm64' ? 'x64'
         : name.endsWith('.dmg') || name.endsWith('.AppImage') ? 'aarch64' : 'arm64');
       for (const wrongName of [name.replace('0.1.0', '0.0.9'), name.replace('MobaRust', 'OtherApp'), wrongArch]) {
         fixture(({ cwd, put, invoke }) => {

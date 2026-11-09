@@ -13,6 +13,7 @@ Clone the repository and install the locked frontend dependencies:
 ```bash
 git clone https://github.com/OthmaneBlial/MobaRust.git
 cd MobaRust
+git switch -c my-change
 pnpm install --dir apps/desktop --frozen-lockfile
 pnpm --dir apps/desktop dev
 ```
@@ -47,11 +48,15 @@ The [fuzzing guide](docs/testing/fuzzing.md) and [benchmark guide](benchmarks/RE
 describe the existing isolated tools.
 
 `cargo xtask check-rust` runs just workspace formatting, helper staging,
-tests, and Clippy. GitHub Quality and installer workflows are disabled at the
-maintainer's request. Quality has no push/PR triggers; use the local commands
-above. The preserved [Quality recipe](.github/workflows/quality.yml) combines
-frontend/release-asset checks with native Ubuntu, macOS, and Windows checks
-if explicitly re-enabled for future manual validation.
+tests, and Clippy. The development branch restores push/PR/manual Quality
+triggers and a reusable validation gate. The recipes cover native Windows/Linux
+x64 and ARM64 and both Mac architectures. Upstream Actions settings may still
+require owner enablement; a workflow file is not evidence of a completed run.
+The release workflow produces draft prereleases only and requires the strict
+Rust and frontend audit gates. Do not suppress dependency warnings to publish.
+`pre-push-check` audits the current named development branch without network
+access or publishing. Use `cargo xtask package-check` for unsigned local package
+assembly and checksums; portable packaging currently supports macOS only.
 The Linux recipe installs zsh and fish; Unix PTY checks
 record each installed shell's version and explicitly report missing variants.
 PowerShell and cmd each perform three consecutive ConPTY round trips; every

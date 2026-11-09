@@ -27,25 +27,16 @@ pub fn check_known_hosts_path<P: AsRef<Path>>(
     pubkey: &ssh_key::PublicKey,
     path: P,
 ) -> Result<bool, Error> {
-    let check = known_host_keys_path(host, port, path)?
-        .into_iter()
-        .map(|(line, recorded)| {
-            match (
-                pubkey.algorithm() == recorded.algorithm(),
-                *pubkey == recorded,
-            ) {
-                (true, true) => Ok(true),
-                (true, false) => Err(Error::KeyChanged { line }),
-                _ => Ok(false),
-            }
-        })
-        // If any Err was returned, we stop here
-        .collect::<Result<Vec<bool>, Error>>()?
-        .into_iter()
-        // Now we check the results for a match
-        .any(|x| x);
-
-    Ok(check)
+    let recorded = known_host_keys_path(host, port, path)?;
+    // OpenSSH permits multiple trusted keys during rotation. An exact trusted
+    // key must not be rejected just because an older key is also recorded.
+    if recorded.iter().any(|(_, key)| key == pubkey) {
+        return Ok(true);
+    }
+    if let Some((line, _)) = recorded.iter().find(|(_, key)| key.algorithm() == pubkey.algorithm()) {
+        return Err(Error::KeyChanged { line: *line });
+    }
+    Ok(false)
 }
 
 fn known_hosts_path() -> Result<PathBuf, Error> {
@@ -67,11 +58,21 @@ pub fn known_host_keys_path<P: AsRef<Path>>(
 ) -> Result<Vec<(usize, ssh_key::PublicKey)>, Error> {
     use crate::keys::parse_public_key_base64;
 
-    let mut f = if let Ok(f) = File::open(path) {
-        BufReader::new(f)
-    } else {
-        return Ok(vec![]);
+    const MAX_TRUST_BYTES: u64 = 4 * 1024 * 1024;
+    let invalid_file = || std::io::Error::new(std::io::ErrorKind::InvalidInput,
+        "known_hosts must be a regular file no larger than 4 MiB");
+    // Reject devices and FIFOs before opening an explicit imported path.
+    let metadata = match std::fs::metadata(path.as_ref()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(error) => return Err(error.into()),
     };
+    if !metadata.is_file() || metadata.len() > MAX_TRUST_BYTES { return Err(invalid_file().into()); }
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > MAX_TRUST_BYTES { return Err(invalid_file().into()); }
+    let mut f = BufReader::new(file.take(MAX_TRUST_BYTES + 1));
+    let mut consumed = 0_u64;
     let mut buffer = String::new();
 
     let host_port = if port == 22 {
@@ -83,20 +84,34 @@ pub fn known_host_keys_path<P: AsRef<Path>>(
     let mut line = 1;
     let mut matches = vec![];
     while f.read_line(&mut buffer)? > 0 {
+        consumed += buffer.len() as u64;
+        if consumed > MAX_TRUST_BYTES { return Err(invalid_file().into()); }
         {
-            if buffer.as_bytes().first() == Some(&b'#') {
+            if buffer.trim_start().starts_with('#') || buffer.trim().is_empty() {
                 buffer.clear();
+                line += 1;
                 continue;
             }
             debug!("line = {buffer:?}");
-            let mut s = buffer.split(' ');
-            let hosts = s.next();
-            let _ = s.next();
+            let mut s = buffer.split_whitespace();
+            let first = s.next();
+            // Marker lines must never become ordinary trust records. Revoked
+            // keys fail closed; CA trust requires certificate validation.
+            let (marker, hosts) = match first {
+                Some(value) if value.starts_with('@') => (Some(value), s.next()),
+                other => (None, other),
+            };
+            let _algorithm = s.next();
             let key = s.next();
             if let (Some(h), Some(k)) = (hosts, key) {
                 debug!("{h:?} {k:?}");
                 if match_hostname(&host_port, h) {
-                    matches.push((line, parse_public_key_base64(k)?));
+                    let recorded = parse_public_key_base64(k)?;
+                    match marker {
+                        Some("@revoked") => return Err(Error::KeyChanged { line }),
+                        Some(_) => {},
+                        None => matches.push((line, recorded)),
+                    }
                 }
             }
         }
@@ -107,7 +122,12 @@ pub fn known_host_keys_path<P: AsRef<Path>>(
 }
 
 fn match_hostname(host: &str, pattern: &str) -> bool {
+    let mut matched = false;
     for entry in pattern.split(',') {
+        if let Some(negated) = entry.strip_prefix('!') {
+            if wildcard_hostname(host, negated) { return false; }
+            continue;
+        }
         if entry.starts_with("|1|") {
             let mut parts = entry.split('|').skip(2);
             let Some(Ok(salt)) = parts.next().map(|p| BASE64_MIME.decode(p.as_bytes())) else {
@@ -118,14 +138,30 @@ fn match_hostname(host: &str, pattern: &str) -> bool {
             };
             if let Ok(hmac) = Hmac::<Sha1>::new_from_slice(&salt) {
                 if hmac.chain_update(host).verify_slice(&hash).is_ok() {
-                    return true;
+                    matched = true;
                 }
             }
-        } else if host == entry {
-            return true;
+        } else if wildcard_hostname(host, entry) {
+            matched = true;
         }
     }
-    false
+    matched
+}
+
+// Linear-space glob matching: OpenSSH hostname patterns use * and ?.
+fn wildcard_hostname(host: &str, pattern: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    let pattern = pattern.to_ascii_lowercase();
+    let (h, p) = (host.as_bytes(), pattern.as_bytes());
+    let (mut i, mut j, mut star, mut retry) = (0, 0, None, 0);
+    while i < h.len() {
+        if j < p.len() && (p[j] == b'?' || p[j] == h[i]) { i += 1; j += 1; }
+        else if j < p.len() && p[j] == b'*' { star = Some(j); j += 1; retry = i; }
+        else if let Some(s) = star { retry += 1; i = retry; j = s + 1; }
+        else { return false; }
+    }
+    while j < p.len() && p[j] == b'*' { j += 1; }
+    j == p.len()
 }
 
 /// Record a host's public key into the user's known_hosts file.

@@ -12,11 +12,11 @@ if (process.argv[2] === 'check-version') {
   }
 } else if (process.argv[2] === 'collect') {
   const platform = process.argv[3];
-  if (!['windows-x64', 'linux-x64', 'macos-arm64', 'macos-x64'].includes(platform)) throw new Error('Unknown platform');
+  if (!['windows-x64', 'windows-arm64', 'linux-x64', 'linux-arm64', 'macos-arm64', 'macos-x64'].includes(platform)) throw new Error('Unknown platform');
   const helperDir = 'apps/desktop/src-tauri/helpers';
   const helper = `mobarust-vnc-helper${platform.startsWith('windows') ? '.exe' : ''}`;
   if (!existsSync(join(helperDir, helper)) || readdirSync(helperDir).some(name => name.includes('rdp'))) throw new Error('Invalid helper staging');
-  const extensions = platform.startsWith('windows') ? ['.exe'] : platform.startsWith('linux') ? ['.deb', '.AppImage'] : ['.dmg'];
+  const extensions = platform.startsWith('windows') ? ['.exe'] : platform.startsWith('linux') ? ['.deb', '.AppImage', '.rpm'] : ['.dmg'];
   function walk(dir) {
     return readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)]);
   }
@@ -25,8 +25,8 @@ if (process.argv[2] === 'check-version') {
     throw new Error(`Expected exactly one installer per format: ${extensions.join(', ')}`);
   }
   const stem = `${config.productName}_${config.version}`;
-  const expectedNames = platform === 'windows-x64' ? [`${stem}_x64-setup.exe`]
-    : platform === 'linux-x64' ? [`${stem}_amd64.deb`, `${stem}_amd64.AppImage`]
+  const expectedNames = platform.startsWith('windows') ? [`${stem}_${platform.endsWith('arm64') ? 'arm64' : 'x64'}-setup.exe`]
+    : platform.startsWith('linux') ? [`${stem}_${platform.endsWith('arm64') ? 'arm64' : 'amd64'}.deb`, `${stem}_${platform.endsWith('arm64') ? 'aarch64' : 'amd64'}.AppImage`, `${config.productName}-${config.version}-1.${platform.endsWith('arm64') ? 'aarch64' : 'x86_64'}.rpm`]
       : [`${stem}_${platform === 'macos-arm64' ? 'aarch64' : 'x64'}.dmg`];
   for (const path of files) {
     if (!expectedNames.includes(basename(path))) {

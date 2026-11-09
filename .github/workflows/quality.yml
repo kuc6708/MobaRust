@@ -1,10 +1,11 @@
 name: Quality
 
 on:
+  workflow_call:
   workflow_dispatch:
-
-# Disabled on GitHub at the maintainer's request. No push/PR triggers;
-# retain this recipe for explicitly authorized future manual validation.
+  pull_request:
+  push:
+    branches: [main, "rea/**"]
 
 permissions:
   contents: read
@@ -18,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-22.04, macos-15, windows-latest]
+        runner: [ubuntu-22.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     defaults:
@@ -65,3 +66,21 @@ jobs:
 
 # Experimental helpers, fuzzing, installers, signing and GUI/hardware testing
 # remain separate gates. This workflow never creates a release.
+
+  dependency-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: '10.15.0'
+      - run: cargo install cargo-audit --version 0.22.2 --locked
+      - run: cargo audit --deny warnings
+      - run: cargo audit --file tools/vnc-helper/Cargo.lock --deny warnings
+      - run: cargo audit --file fuzz/Cargo.lock --deny warnings
+      - run: pnpm audit --audit-level low
+        working-directory: apps/desktop
