@@ -36,7 +36,7 @@ Operations Deck layout are retained.
 | Forwarding | Local, remote, SOCKS5 implemented | Native broader-platform acceptance remains separate |
 | SSH compression | Existing flate2 transport support | No per-session compression selector/benchmark added |
 | Host trust | Unknown/changed distinction and explicit persistence added | Direct inspection only; no SSH CA trust or automatic key replacement |
-| SFTP/SCP | Browser, recursive copy, progress/cancel, metadata/mutations implemented | Interrupted transfers restart; resume and drag/drop remain unsupported |
+| SFTP/SCP | Browser, recursive copy, progress/cancel, metadata/mutations implemented; drag/drop upload wired with path normalization tests | Interrupted transfers safely restart; resumable transfers remain unsupported |
 | MobaXterm migration | Text SSH bookmarks added | No saved passwords, host trust, WSL shortcuts, macros, appearance or standalone tunnel import |
 | Session management | Folders, favorites, recents, search, editing, JSON backup/export; optional per-session font size (8–32), scrollback (100–100000) and cursor-blink preferences | Installed 0.1.12 cannot read populated preference fields; native GUI acceptance pending |
 | Vault | Native keyring and encrypted portable vault exist | Native keychain acceptance not exercised with personal secrets |

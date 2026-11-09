@@ -39,6 +39,7 @@ import { isRemoteMonitorRefreshInterval, REMOTE_MONITOR_REFRESH_INTERVALS } from
 import { remoteChildPath, remoteParentPath } from "./remote-path";
 import { quoteRemotePromptPath } from "./remote-prompt";
 import { normalizeDroppedUploadPaths } from "./transfer-input";
+import { describeLocalMachine } from "./local-machine";
 import desktopPackage from "../package.json";
 import {
   preserveRemoteDesktopError,
@@ -1514,6 +1515,8 @@ function App() {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [appVersion, setAppVersion] = useState(desktopPackage.version);
+  const [appPlatform, setAppPlatform] = useState(() => typeof navigator !== "undefined" && navigator.platform.includes("Mac") ? "macos" : typeof navigator !== "undefined" && navigator.platform.includes("Win") ? "windows" : "linux");
+  const [appArch, setAppArch] = useState("");
   const [sessionRows, setSessionRows] = useState<SessionListItem[]>(IS_TAURI ? [] : previewSessions);
   const [recentOnly, setRecentOnly] = useState(false);
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
@@ -3689,8 +3692,12 @@ function App() {
   useEffect(() => {
     if (!IS_TAURI) return;
     let disposed = false;
-    void invoke<{ version: string }>("app_snapshot").then(({ version }) => {
-      if (!disposed) setAppVersion(version);
+    void invoke<{ version: string; platform: string; architecture: string }>("app_snapshot").then(({ version, platform, architecture }) => {
+      if (!disposed) {
+        setAppVersion(version);
+        setAppPlatform(platform);
+        setAppArch(architecture);
+      }
     }).catch(() => undefined);
     return () => { disposed = true; };
   }, []);
@@ -4234,7 +4241,7 @@ function App() {
               <div className="rail-heading"><span>Session brief</span><button aria-label="Session options" title="Open connection options" onClick={() => setQuickConnectOpen(true)}><MoreHorizontal size={15} /></button></div>
                 <div className="machine-card">
                 <div className="machine-icon"><Server size={18} /></div>
-                <div><div className="machine-name">{remoteHost ?? "This Mac"}</div><div className="machine-detail">{remoteHost ? (remoteProtocol === "telnet" ? "Telnet · unencrypted" : remoteProtocol === "serial" ? "Serial · device" : remoteProtocol === "rdp" ? "RDP · isolated helper" : remoteProtocol === "vnc" ? "VNC · isolated helper" : "SSH · verified transport") : "Apple Silicon · local"}</div></div>
+                <div><div className="machine-name">{remoteHost ?? describeLocalMachine(appPlatform, appArch).name}</div><div className="machine-detail">{remoteHost ? (remoteProtocol === "telnet" ? "Telnet · unencrypted" : remoteProtocol === "serial" ? "Serial · device" : remoteProtocol === "rdp" ? "RDP · isolated helper" : remoteProtocol === "vnc" ? "VNC · isolated helper" : "SSH · verified transport") : describeLocalMachine(appPlatform, appArch).detail}</div></div>
                 <span className={`machine-live machine-state-${terminalStatus}`}>{terminalStatus === "connected" ? "LIVE" : terminalStatus.toUpperCase()}</span>
               </div>
               <div className="rail-group"><div className="rail-label">Runtime</div><Metric label="Surface" value={remoteProtocol === "rdp" || remoteProtocol === "vnc" ? "remote desktop" : remoteHost ? "remote shell" : "zsh"} /><Metric label="Renderer" value={remoteProtocol === "rdp" || remoteProtocol === "vnc" ? "RGBA framebuffer" : "xterm-256color"} /><Metric label="Process" value={terminalStatus === "connected" ? "running" : "idle"} /></div>

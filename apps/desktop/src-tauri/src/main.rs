@@ -96,6 +96,7 @@ struct AppSnapshot {
     product: &'static str,
     version: &'static str,
     platform: &'static str,
+    architecture: &'static str,
     local_terminal_available: bool,
 }
 
@@ -383,6 +384,7 @@ fn app_snapshot() -> AppSnapshot {
         product: "MobaRust",
         version: env!("CARGO_PKG_VERSION"),
         platform: std::env::consts::OS,
+        architecture: std::env::consts::ARCH,
         local_terminal_available: true,
     }
 }

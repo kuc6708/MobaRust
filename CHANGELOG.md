@@ -24,6 +24,10 @@
   omits unset values for legacy compatibility, and rejects unknown fields.
 - Cover preferences with native bounds, serde/legacy-JSON and store
   round-trip/export/import tests plus frontend parser/resolver tests.
+- Report the local machine name and architecture from the native `app_snapshot`
+  (`This Linux host`/`This PC`/`This Mac` plus x64/ARM64/Apple Silicon/Intel)
+  instead of always claiming "This Mac / Apple Silicon". Covered by a frontend
+  unit test.
 - Fix `package-check` for Linux/Windows by verifying only the final regular
   installer files: intermediate AppImage `.AppDir` staging symlinks are ignored
   and symlinked installer inputs are refused. Final deliverables are copied and
