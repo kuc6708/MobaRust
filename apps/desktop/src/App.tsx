@@ -4241,7 +4241,7 @@ function App() {
               </div>
             </div>
 
-            <aside className="right-rail">
+            <section className="right-rail" aria-label="Session brief">
               <div className="rail-heading"><span>Session brief</span><button aria-label="Session options" title="Open connection options" onClick={() => setQuickConnectOpen(true)}><MoreHorizontal size={15} /></button></div>
                 <div className="machine-card">
                 <div className="machine-icon"><Server size={18} /></div>
@@ -4251,7 +4251,7 @@ function App() {
               <div className="rail-group"><div className="rail-label">Runtime</div><Metric label="Surface" value={remoteProtocol === "rdp" || remoteProtocol === "vnc" ? "remote desktop" : remoteHost ? "remote shell" : "zsh"} /><Metric label="Renderer" value={remoteProtocol === "rdp" || remoteProtocol === "vnc" ? "RGBA framebuffer" : "xterm-256color"} /><Metric label="Process" value={terminalStatus === "connected" ? "running" : "idle"} /></div>
               <div className="rail-group"><div className="rail-label">Workspace notes</div><p className="rail-copy">Use tabs and split panes to keep work in view. Files and SSH tunnels follow the active SSH session.</p></div>
               <div className="rail-callout"><div className="callout-icon"><Network size={15} /></div><div><strong>{remoteHost && terminalStatus !== "connected" ? `${remoteProtocol?.toUpperCase()} ${terminalStatus}` : remoteProtocol === "telnet" ? "Telnet transport active" : remoteProtocol === "serial" ? "Serial transport active" : remoteProtocol === "rdp" ? "RDP helper active" : remoteProtocol === "vnc" ? "VNC helper active" : remoteHost ? "SSH transport active" : "Connect securely"}</strong><p>{remoteHost && terminalStatus !== "connected" ? "Transport is not connected. Reopen the saved session or use Quick connect to try again." : remoteProtocol === "telnet" ? "This legacy terminal is unencrypted; use SSH for protected administration." : remoteProtocol === "serial" ? "Serial traffic depends on the connected hardware; MobaRust does not add encryption." : remoteProtocol === "rdp" ? "The remote desktop is isolated behind the native helper boundary; certificate and gateway options remain explicit." : remoteProtocol === "vnc" ? "The VNC framebuffer and input stay in the native helper boundary; legacy VNC transport is not SSH-level encryption." : remoteHost ? "Host-key verification and native PTY negotiation are active for this shell." : "Known-host verification and PTY negotiation are ready for a real SSH connection."}</p><button onClick={() => setQuickConnectOpen(true)}>{remoteHost ? "Open another session" : "Quick connect"} <ExternalLink size={12} /></button></div></div>
-            </aside>
+            </section>
           </div>
 
           <footer className="workspace-footer"><span><span className="footer-led" /> MobaRust core · v{appVersion}</span><span>Rust PTY bridge</span><span>{navigator.platform.includes("Mac") ? "macOS" : navigator.platform.includes("Win") ? "Windows" : "Linux"} · local mode</span><span className="footer-spacer" /><span>{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}</span></footer>
@@ -4611,8 +4611,8 @@ function TunnelDialog({ kind, onClose, onStart }: { kind: "local" | "remote" | "
     catch (failure) { setError(String(failure)); }
     finally { setBusy(false); }
   };
-  return <div className="palette-backdrop" role="presentation" onMouseDown={() => { if (!busy) onClose(); }}>
-    <form className="quick-connect" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => void submit(event)} onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
+  return <div className="palette-backdrop" role="dialog" aria-modal="true" aria-label={title} onMouseDown={() => { if (!busy) onClose(); }}>
+    <form className="quick-connect" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => void submit(event)} onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
       <div className="session-editor-heading"><div><span className="eyebrow">SSH / PORT FORWARDING</span><h2>{title}</h2><p>{kind === "remote" ? "Listen on the SSH server and reach a service from this computer." : kind === "dynamic" ? "Create a local SOCKS5 listener through this SSH session." : "Listen on this computer and reach a service from the SSH server."}</p></div><button type="button" className="icon-button" aria-label="Close tunnel dialog" disabled={busy} onClick={onClose}><X size={17} /></button></div>
       <div className="quick-connect-grid">
         <label>{kind === "remote" ? "Remote" : "Local"} bind host<input autoFocus required value={bindHost} onChange={(event) => setBindHost(event.target.value)} /></label>
@@ -4812,7 +4812,7 @@ function EmptyProtocolView({ view, onAction }: { view: "files" | "tunnels" | "mo
 }
 
 function InfoCard({ icon: Icon, label, title, detail, action, onAction }: { icon: LucideIcon; label: string; title: string; detail: string; action: string; onAction: () => void }) {
-  return <article className="info-card"><div className="info-card-top"><span className="info-icon"><Icon size={15} /></span><span>{label}</span><button aria-label={`More information about ${label}`} title={`More information about ${label}`} onClick={onAction}><MoreHorizontal size={15} /></button></div><h3>{title}</h3><p>{detail}</p><button className="text-button" onClick={onAction}>{action} <ExternalLink size={12} /></button></article>;
+  return <article className="info-card"><div className="info-card-top"><span className="info-icon"><Icon size={15} /></span><span>{label}</span><button aria-label={`More information about ${label}`} title={`More information about ${label}`} onClick={onAction}><MoreHorizontal size={15} /></button></div><h2>{title}</h2><p>{detail}</p><button className="text-button" onClick={onAction}>{action} <ExternalLink size={12} /></button></article>;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -4981,7 +4981,7 @@ function CredentialVaultModal({ portableVaultStatus, onClose, onSave, onDelete, 
     }
   };
 
-  return <div className="palette-backdrop" role="presentation" onMouseDown={close}><form className="credential-modal" role="dialog" aria-modal="true" aria-label="Credential vault" onMouseDown={(event) => event.stopPropagation()} onSubmit={save}>
+  return <div className="palette-backdrop" role="dialog" aria-modal="true" aria-label="Credential vault" onMouseDown={close}><form className="credential-modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={save}>
     <div className="session-editor-heading"><div><span className="eyebrow">NATIVE SECURITY</span><h2>Credential vault</h2><p>Save an opaque reference. Stored secrets remain in native storage and are never listed or returned to React.</p></div><button type="button" className="icon-button" aria-label="Close credential vault" onClick={close}><X size={17} /></button></div>
     <div className="credential-modal-body">
       <label>Credential reference<input required autoFocus value={credentialId} onChange={(event) => setCredentialId(event.target.value)} placeholder="prod-bastion-password" autoComplete="off" /><small>Letters, numbers, dots, dashes, and underscores only.</small></label>
@@ -5312,8 +5312,8 @@ function SessionEditor({ session, onClose, onSave }: { session: SavedSession; on
     : session.auth.kind === "keyboardInteractivePrompt" ? "Ask each SSH challenge" : session.auth.kind === "none" ? "No authentication" : session.auth.kind === "agent" ? "SSH agent" : session.auth.kind === "password" ? "Vault credential reference" : session.auth.kind === "keyboardInteractive" ? "Keyboard-interactive vault response" : "Private key reference";
 
   return (
-    <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
-      <form className="session-editor" role="dialog" aria-modal="true" aria-label={`Edit ${session.name}`} onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}>
+    <div className="palette-backdrop" role="dialog" aria-modal="true" aria-label={`Edit ${session.name}`} onMouseDown={onClose}>
+      <form className="session-editor" onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}>
         <div className="session-editor-heading">
           <div>
             <span className="eyebrow">SESSION / METADATA</span>
@@ -5547,8 +5547,8 @@ function SettingsModal({ settings, error, portableVaultStatus, onClose, onSave, 
   };
 
   return (
-    <div className="palette-backdrop" role="presentation" onMouseDown={close}>
-      <form className="settings-modal" role="dialog" aria-modal="true" aria-label="Settings" onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}>
+    <div className="palette-backdrop" role="dialog" aria-modal="true" aria-label="Settings" onMouseDown={close}>
+      <form className="settings-modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}>
         <div className="session-editor-heading">
           <div>
             <span className="eyebrow">MOBA / SETTINGS</span>
@@ -5823,12 +5823,9 @@ function QuickConnectDialog({ error, onClose, onConnectSsh, onConnectTelnet, onC
   };
 
   return (
-    <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="palette-backdrop" role="dialog" aria-modal="true" aria-label="Quick connect" onMouseDown={onClose}>
       <form
         className="quick-connect"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Quick connect"
         onMouseDown={(event) => event.stopPropagation()}
         onSubmit={submit}
       >

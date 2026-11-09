@@ -29,9 +29,11 @@
   cancellation or mismatch, and drive it from the transfer retry action. SCP and
   uploads still restart from the beginning. Covered by a real-SFTP fixture test
   that resumes a verified prefix and rejects corrupt, complete and symlinked parts.
-- Add a rendered-DOM accessibility baseline (headless Chrome) and record it; the
-  default Operations Deck has accessible names on all 53 buttons, image `alt`
-  text, named dialogs, unique ids and `lang="en"`.
+- Accessibility: axe-core over headless Chrome now reports **0 violations** for
+  the default Operations Deck and the Settings, Help, Credential vault, Snippets
+  and Quick connect dialogs. Raised muted-text contrast, fixed heading order,
+  replaced the nested `aside` with a labelled `section`, and moved dialog roles
+  off `<form>` elements.
 - Report the local machine name and architecture from the native `app_snapshot`
   (`This Linux host`/`This PC`/`This Mac` plus x64/ARM64/Apple Silicon/Intel)
   instead of always claiming "This Mac / Apple Silicon". Covered by a frontend

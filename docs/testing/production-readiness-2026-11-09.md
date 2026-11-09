@@ -40,7 +40,7 @@ Operations Deck layout are retained.
 | MobaXterm migration | Text SSH bookmarks added | No saved passwords, host trust, WSL shortcuts, macros, appearance or standalone tunnel import |
 | Session management | Folders, favorites, recents, search, editing, JSON backup/export; optional per-session font size (8–32), scrollback (100–100000) and cursor-blink preferences | Installed 0.1.12 cannot read populated preference fields; native GUI acceptance pending |
 | Vault | Native keyring and encrypted portable vault exist | Native keychain acceptance not exercised with personal secrets |
-| UI | Existing themes, command palette, statuses, native menus retained; local machine name/architecture now derived from the native snapshot | Rendered-DOM baseline audit of the default view is clean (see validation); comprehensive screen-reader, contrast, keyboard and dialog-by-dialog review remains open |
+| UI | Existing themes, command palette, statuses, native menus retained; local machine name/architecture now derived from the native snapshot; axe-core clean on the default view and five dialogs | Remaining dialogs (e.g. Macros), keyboard flow, high-DPI and screen-reader acceptance still need review |
 | X11 | Synthetic setup forwarding tested separately | Real Xvfb requires a safe existing sticky Unix socket directory |
 | RDP/VNC | Existing helper boundaries and tests retained | RDP excluded from shipping; independent security/interoperability gates remain |
 
@@ -107,10 +107,14 @@ fixture-isolation and synthetic-X11 corrections; they are not counted as passes.
 - `cargo test -p mobarust` 117 passed; `cargo test -p mobarust-ssh --lib` 48 passed;
   the end-to-end `local_sshd` resume test passes (verified prefix append, corrupt/complete
   part rejection, symlink refusal, offset download).
-- Accessibility baseline (headless Chrome, rendered default Operations Deck):
-  53 buttons, 0 missing accessible names, 0 images without `alt`, 0 unnamed
-  dialogs, 0 duplicate ids, `html lang="en"`. This covers the default view only;
-  dialogs/other views, contrast, keyboard and screen-reader acceptance remain open.
+- Accessibility (headless Chrome + axe-core 4.10.2 over CDP): **0 violations**
+  for the default Operations Deck and the Settings, Help, Credential vault,
+  Snippets and Quick connect dialogs. Fixes: brighter `--faint` text (contrast),
+  InfoCard headings `h3`→`h2` (heading order), right rail `aside`→labelled
+  `section`, and dialog roles moved from `<form>` to its overlay. Static DOM
+  checks also showed 0 missing accessible names/`alt`, 0 unnamed dialogs and 0
+  duplicate ids. Macros/remaining dialogs, keyboard flow, high-DPI and
+  screen-reader acceptance still need review.
 - `cargo xtask check-rust` (default umask 0002): formatting and all workspace
   suites passed (desktop 116, core 30 + 4, store 46 + 4, SSH authentication 16,
   forwarding 4) except the OpenSSH `local_sshd` fixture, which reported 4
