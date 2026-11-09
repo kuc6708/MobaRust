@@ -100,6 +100,15 @@ fixture-isolation and synthetic-X11 corrections; they are not counted as passes.
 - `cargo test -p xtask`: 21 passed; `node --test tools/release-assets.test.mjs`:
   9 passed (including AppDir-symlink and symlinked-installer regressions).
 - `APPIMAGE_EXTRACT_AND_RUN=1 cargo xtask package-check`: exit 0.
+- `cargo xtask check-rust` (default umask 0002): formatting and all workspace
+  suites passed (desktop 116, core 30 + 4, store 46 + 4, SSH authentication 16,
+  forwarding 4) except the OpenSSH `local_sshd` fixture, which reported 4
+  failures. Two were caused by this host's group-writable umask 0002 creating a
+  group-writable trust fixture (the new trust guard correctly refused it); two
+  are the host's OpenSSH 9.6 sshd rejecting the synthetic X11 channel request.
+  Re-running `local_sshd` under `umask 022` yields 23 passed, 2 failed (only the
+  X11 environment cases) and 1 ignored. These are environment-specific and are
+  not counted as passes; the trust and X11 guards are not weakened.
 
 ### Packaging validation (Linux x64)
 
@@ -118,9 +127,9 @@ native-window behavior remains untested here.
 
 ### Not yet run on this host
 
-Full `cargo xtask check` (SSH/OpenSSH fixtures, fuzz, helper gates), native GUI
-acceptance, Windows/macOS runners, clean-install testing, signing and
-notarization.
+A fully green `cargo xtask check` (blocked by the host's synthetic-X11 fixture),
+the isolated RDP/VNC helper and fuzz gates, native GUI acceptance,
+Windows/macOS runners, clean-install testing, signing and notarization.
 
 ## Release gates
 
