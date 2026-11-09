@@ -100,6 +100,10 @@ fixture-isolation and synthetic-X11 corrections; they are not counted as passes.
 - `cargo test -p xtask`: 21 passed; `node --test tools/release-assets.test.mjs`:
   9 passed (including AppDir-symlink and symlinked-installer regressions).
 - `APPIMAGE_EXTRACT_AND_RUN=1 cargo xtask package-check`: exit 0.
+- `cargo xtask check-vnc-helper`, `check-rdp-helper` and `check-fuzz`: passed
+  (format/tests/clippy for the isolated workspaces).
+- `cargo xtask package-layout-check`: verified unsigned runtime package layouts
+  for macOS, Windows and Linux.
 - `cargo test -p mobarust` 117 passed; `cargo test -p mobarust-ssh --lib` 48 passed;
   the end-to-end `local_sshd` resume test passes (verified prefix append, corrupt/complete
   part rejection, symlink refusal, offset download).
@@ -135,9 +139,8 @@ native-window behavior remains untested here.
 ### Not yet run on this host
 
 A fully green `cargo xtask check` (blocked by the host's synthetic-X11 fixture),
-the isolated RDP/VNC helper and fuzz gates, comprehensive accessibility (dialogs,
-contrast, keyboard, screen reader),
-Windows/macOS runners, clean-install testing, signing and notarization.
+comprehensive accessibility (dialogs, contrast, keyboard, screen reader),
+Windows/macOS runtime runners, clean-install testing, signing and notarization.
 
 ## Release gates
 
