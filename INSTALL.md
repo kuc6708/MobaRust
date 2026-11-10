@@ -1,69 +1,67 @@
-# Installation — MobaRust 0.1.31 (release candidate, unsigned)
+# Installation — MobaRust 0.1.32-rc.1 (release candidate, unsigned)
 
-**Status: release candidate, not a stable release.** Artifacts are unsigned and
-were **not published**. Do not install over an existing MobaXterm/MobaRust
-installation without explicit authorization; back up sessions/configuration
-first. The currently installed application was not modified during this work.
+**Release candidate — unpublished and unsigned.** No GitHub release exists.
+Verify checksums before use and prefer a disposable VM/account. Do not install
+over an existing MobaXterm/MobaRust installation without explicit authorization;
+the installed application was not modified during this work.
 
-## Verified artifact: Linux x64
+Artifacts are preserved in
+`/home/shood/MobaRust-review/artifacts/release-0.1.32-rc.1/` with
+`SHA256SUMS-all.txt` and per-platform manifests. Full hashes are in
+`RELEASE_NOTES.md`.
 
-Files and checksums (also in `SHA256SUMS-linux-x64.txt`):
-
-```
-59c01c09194b167df067e06f0625951e2a6f13a80653560a3ac21c68055423db  MobaRust-0.1.31-linux-x64.AppImage
-a214f39399d8d8d1a70ac5e90ea0442e7a7881734671347115ae0774a4260bea  MobaRust-0.1.31-linux-x64.deb
-b1af997872709dd2ecb49436e6496793941f7d388b58a8df67de75250dc8405b  MobaRust-0.1.31-linux-x64.rpm
-```
-
-Verify first:
+## Verify first
 
 ```bash
-sha256sum -c SHA256SUMS-linux-x64.txt
+sha256sum -c SHA256SUMS-all.txt
 ```
 
-### Debian/Ubuntu (DEB)
+(Paths in the aggregate file are relative to the artifact directory.)
+
+## Linux x64 / ARM64
+
+DEB:
 
 ```bash
-sudo apt install ./MobaRust-0.1.31-linux-x64.deb
-# uninstall
-sudo apt remove mobarust
+sudo apt install ./MobaRust-0.1.32-linux-x64.deb
+# ARM64: ./MobaRust-0.1.32-linux-arm64.deb
+# uninstall: sudo apt remove moba-rust
 ```
 
-### Fedora/RHEL (RPM)
+RPM:
 
 ```bash
-sudo dnf install ./MobaRust-0.1.31-linux-x64.rpm
-# or: sudo rpm -i ./MobaRust-0.1.31-linux-x64.rpm
-# uninstall: sudo dnf remove MobaRust
+sudo dnf install ./MobaRust-0.1.32-linux-x64.rpm
+# ARM64: ./MobaRust-0.1.32-linux-arm64.rpm
+# uninstall: sudo dnf remove moba-rust
 ```
 
-### AppImage (no install)
+AppImage (no install):
 
 ```bash
-chmod +x MobaRust-0.1.31-linux-x64.AppImage
-./MobaRust-0.1.31-linux-x64.AppImage
-# systems without FUSE:
-APPIMAGE_EXTRACT_AND_RUN=1 ./MobaRust-0.1.31-linux-x64.AppImage
+chmod +x MobaRust-0.1.32-linux-x64.AppImage
+./MobaRust-0.1.32-linux-x64.AppImage
+# without FUSE:
+APPIMAGE_EXTRACT_AND_RUN=1 ./MobaRust-0.1.32-linux-x64.AppImage
 ```
 
-## Windows x64 / Windows ARM64 / Linux ARM64 / macOS
+## Windows x64 / ARM64 (NSIS)
 
-No verified installers were produced in this session. Do **not** use unverified
-packages. See `RELEASE_READINESS.md` for the exact blockers (missing `workflow`
-scope/release-workflow registration, macOS arm64 runner cancellation, and the
-dependency exception decision). When packages exist they will be NSIS (`.exe`)
-on Windows, DEB/RPM on Linux ARM64, and DMG on macOS.
+Run `MobaRust-0.1.32-windows-x64.exe` or
+`MobaRust-0.1.32-windows-arm64.exe`. The installer is unsigned, so SmartScreen
+will warn. Uninstall via Settings → Apps.
 
-## Signing and trust
+## macOS Intel / ARM64 (DMG)
 
-- Builds are **unsigned**: Windows SmartScreen and macOS Gatekeeper will warn;
-  Linux packages have no repository signature.
-- Always verify the SHA-256 checksum before running an unsigned artifact.
+Open `MobaRust-0.1.32-macos-x64.dmg` or `MobaRust-0.1.32-macos-arm64.dmg` and
+drag the app to Applications. The build is unsigned and not notarized, so
+Gatekeeper will warn; use System Settings → Privacy & Security to allow it only
+after verifying the checksum.
 
 ## Data and rollback
 
-- Default data directory (Linux):
-  `~/.local/share/com.othmane.mobarust` (sessions, settings, vault metadata).
-  Back it up before testing; a new install may migrate or rewrite it.
-- The AppImage is self-contained; removing the file removes the application.
-- For RC testing, prefer a disposable VM or a separate user account.
+- Linux data directory: `~/.local/share/com.othmane.mobarust` (sessions,
+  settings, vault metadata). Back it up before testing.
+- Windows/macOS use the platform app-data directory.
+- AppImage is self-contained; deleting the file removes it.
+- Prefer a disposable VM or separate user for RC testing.

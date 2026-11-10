@@ -1,4 +1,4 @@
-# Build instructions — MobaRust 0.1.31 (development snapshot)
+# Build instructions — MobaRust 0.1.32 (development snapshot)
 
 These instructions build and validate the branch locally on Linux. Artifacts are
 unsigned; do not publish them as a stable release.
@@ -73,9 +73,9 @@ node tools/release-assets.mjs collect linux-x64 \
 
 Expected outputs:
 
-- `target/release/bundle/deb/MobaRust_0.1.31_amd64.deb`
-- `target/release/bundle/rpm/MobaRust-0.1.31-1.x86_64.rpm`
-- `target/release/bundle/appimage/MobaRust_0.1.31_amd64.AppImage`
+- `target/release/bundle/deb/MobaRust_0.1.32_amd64.deb`
+- `target/release/bundle/rpm/MobaRust-0.1.32-1.x86_64.rpm`
+- `target/release/bundle/appimage/MobaRust_0.1.32_amd64.AppImage`
 
 The collector refuses symlinked installers and intermediate AppDir symlinks, and
 verifies exactly one installer per format.
@@ -95,20 +95,24 @@ checks, package layouts and fuzz on: `ubuntu-22.04`, `ubuntu-24.04-arm`,
 
 ### Release installers
 
-`.github/workflows/release.yml` exists on the branch and builds installers for
-Windows x64 (NSIS), Linux x64 (DEB/RPM/AppImage), Linux ARM64 (DEB/RPM), macOS
-ARM64 and macOS Intel (DMG), uploads checksummed artifacts, and only publishes a
-draft prerelease on a `v*` tag. It is **not currently registered** because it is
-not on the fork's default branch and the token lacks the `workflow` scope.
-
-Owner steps to enable it:
+`.github/workflows/release.yml` builds installers for Windows x64/ARM64 (NSIS),
+Linux x64/ARM64 (DEB/RPM/AppImage), and macOS Intel/ARM64 (DMG), uploads
+checksummed artifacts, and creates a draft prerelease only when explicitly
+requested. It is registered on the fork's default branch (main was fast-forwarded
+to the RC commit with the acquired `workflow` scope). Publishing is gated:
 
 ```bash
-gh auth refresh --hostname github.com --scopes workflow
-# push the branch/workflow files to the default branch with that token, then:
+# Build artifacts without publishing (used for the verified RC):
 gh workflow run "Release installers" \
   -R kuc6708/MobaRust --ref rea/production-readiness-2026-11-09
+
+# After owner approval only: draft prerelease on an RC tag
+gh workflow run "Release installers" \
+  -R kuc6708/MobaRust --ref v0.1.32-rc.1 -f publish=true
 ```
+
+A tag push alone never publishes (`publish` requires workflow_dispatch with
+`publish=true`). The RC tag is currently local only.
 
 Download and preserve artifacts:
 
@@ -117,8 +121,18 @@ gh run list -R kuc6708/MobaRust --workflow "Release installers"
 gh run download <run-id> -R kuc6708/MobaRust -D release-assets
 ```
 
-The `macos-15` arm64 runner was cancelled while queued during Quality; verify
-each job actually ran before claiming a platform package.
+Quality and Release completed successfully on all six hosted platforms for the
+RC commit (`1049c0d`). The macOS ARM64 synthetic X11 fixture is skipped there
+with a recorded reason.
+
+When the version changes, regenerate the isolated lockfiles so `--locked` helper
+staging succeeds:
+
+```bash
+cargo update --manifest-path tools/vnc-helper/Cargo.toml
+cargo update --manifest-path tools/rdp-helper/Cargo.toml
+cargo update --manifest-path fuzz/Cargo.toml
+```
 
 ## Signing and publication
 
@@ -126,5 +140,6 @@ each job actually ran before claiming a platform package.
   notarization require owner-held credentials.
 - Do not create a tag or publish until the dependency decision (see
   `DEPENDENCY_EXCEPTIONS.md`) and signing are complete.
-- `release.yml` publishes only on `v*` tags (draft prerelease); a manual
-  `workflow_dispatch` run builds and uploads artifacts without publishing.
+- `release.yml` builds on tag pushes and on manual dispatch; it creates a draft
+  prerelease only for `workflow_dispatch` on a tag with `publish=true`. The RC
+  tag `v0.1.32-rc.1` is local and unpublished.
