@@ -1,3 +1,55 @@
+# MobaRust 0.1.33-rc.1 — SSH trust-fix test build
+
+**Verified, unpublished test build.** Commit `4a0b2b0`; local tag
+`v0.1.33-rc.1` (not pushed); no GitHub release.
+
+## What changed
+
+- Sessions without an explicit trust file or pin now use the user's **OpenSSH
+  known_hosts** (`%USERPROFILE%\.ssh\known_hosts` on Windows) instead of
+  `RejectUnknown`. Unknown keys are still rejected; changed keys still fail
+  closed.
+- The connection warning now offers **Review & trust host key…**: it inspects
+  the key, shows host/port/algorithm/SHA-256 fingerprint, requires confirmation,
+  persists to the default/overridden known_hosts, and retries. Changed keys get
+  no trust action.
+- Trust creation now creates the missing `.ssh` directory (0700 on Unix);
+  CRLF and missing-file known_hosts behavior is covered by regression tests.
+- Diagnostics distinguish handshake closures from network failures.
+- Local shell labels are correct on Windows: the default/cmd surface shows
+  `cmd.exe` (tabs and the runtime Surface), explicit shells and WSL are labeled
+  by their actual target.
+
+## Verified Windows x64 test installer
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `MobaRust-0.1.33-windows-x64.exe` | 6,209,025 | `f507e25aa6a2131a0dfc8daea478e5d182127f0400278c0f2e86eb58b701e5ba` |
+
+Preserved at `/home/shood/MobaRust-review/artifacts/release-0.1.33-rc.1/`.
+The installer is **unsigned** and may upgrade an installed 0.1.32 build; back up
+first and prefer a disposable VM or separate user account. Do not overwrite an
+existing installation without authorization.
+
+## Verification
+
+- Local: SSH library 50, desktop 118, authentication 16, local-sshd 26;
+  fmt/clippy clean; frontend check/lint/unit/build pass.
+- Quality CI `42920573667`: all six platforms success; only the intentional
+  `dependency-audit` gate fails.
+- Release CI `42920592534`: all six builds success; publish skipped.
+
+## Testing the fix
+
+1. Install/run this build (VM recommended).
+2. Connect `cc00sw03.ifaw.net`: Windows OpenSSH already saved its ED25519 key in
+   your user known_hosts, which MobaRust now uses by default.
+3. If it still reports an unknown key, click **Review & trust host key…**,
+   compare `SHA256:GPLF6NxXJhRiwiNiyGRihC36la4aIw1KdYknZwVrHZE` independently,
+   keep the default trust path, and confirm. Changed keys remain refused.
+
+---
+
 # MobaRust 0.1.32-rc.1 — Release Candidate Notes
 
 **Status: verified, installable release candidate — UNPUBLISHED.** No GitHub

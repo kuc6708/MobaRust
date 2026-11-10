@@ -1,3 +1,25 @@
+# Release readiness — MobaRust 0.1.33-rc.1 test build
+
+## Latest: SSH trust-fix test build (0.1.33-rc.1)
+
+- Commit `4a0b2b0`; local tag `v0.1.33-rc.1` (not pushed); no release published.
+- Fixes the Windows trust workflow: defaults to the user's OpenSSH known_hosts,
+  adds an explicit in-warning **Review & trust host key…** action, keeps
+  unknown/changed keys fail-closed, persists trust across restarts, reports
+  handshake errors distinctly, and corrects local shell labels (`cmd.exe`).
+- Verification: local SSH library 50, desktop 118, authentication 16,
+  local-sshd 26; fmt/clippy clean; frontend checks pass.
+- Quality CI `42920573667`: all six platforms success (audit gate red by design).
+- Release CI `42920592534`: all six builds success; publish skipped.
+- Verified Windows x64 test installer:
+  `MobaRust-0.1.33-windows-x64.exe` (6,209,025 bytes),
+  SHA-256 `f507e25aa6a2131a0dfc8daea478e5d182127f0400278c0f2e86eb58b701e5ba`.
+  Unsigned; do not overwrite an existing install without authorization.
+
+The previous 0.1.32-rc.1 section below remains valid for that candidate.
+
+---
+
 # Release readiness — MobaRust 0.1.32-rc.1
 
 **Decision: release candidate prepared and verified; publication HOLD.**

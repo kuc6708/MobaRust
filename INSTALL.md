@@ -1,4 +1,13 @@
-# Installation — MobaRust 0.1.32-rc.1 (release candidate, unsigned)
+# Installation — MobaRust 0.1.33 test build / 0.1.32-rc.1 (unsigned)
+
+## Windows x64 SSH trust-fix test build (0.1.33)
+
+`MobaRust-0.1.33-windows-x64.exe` — SHA-256
+`f507e25aa6a2131a0dfc8daea478e5d182127f0400278c0f2e86eb58b701e5ba`
+(6,209,025 bytes). Unsigned; SmartScreen will warn. It may upgrade an installed
+0.1.32 build — back up first and prefer a disposable VM or separate user.
+After launch, the Sessions warning offers **Review & trust host key…** and the
+default trust file is your OpenSSH `%USERPROFILE%\.ssh\known_hosts`.
 
 **Release candidate — unpublished and unsigned.** No GitHub release exists.
 Verify checksums before use and prefer a disposable VM/account. Do not install
