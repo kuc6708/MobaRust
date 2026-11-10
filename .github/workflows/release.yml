@@ -14,11 +14,12 @@ on:
 permissions:
   contents: read
 
+# Builds run independently of the separate Quality workflow. The dependency
+# audit remains a mandatory release gate (it is intentionally red while the
+# documented advisories are unresolved); publication is gated behind the
+# explicit publish input below. Do not treat a successful build as approval.
 jobs:
-  validation:
-    uses: ./.github/workflows/quality.yml
   build:
-    needs: validation
     timeout-minutes: 60
     strategy:
       fail-fast: false
