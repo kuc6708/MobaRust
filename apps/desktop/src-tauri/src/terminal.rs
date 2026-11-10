@@ -1011,7 +1011,18 @@ mod tests {
                 .take_writer()
                 .expect("take explicit shell writer");
             let mut command = CommandBuilder::new(&executable);
-            command.args(["-c", "printf 'MOBARUST_EXPLICIT_SHELL_OK\\n'"]);
+            // Do not let user/system startup files interfere with this
+            // round-trip check. zsh -f disables rc files; bash gets the
+            // equivalent flags and a clean BASH_ENV/ENV.
+            let probe = "printf 'MOBARUST_EXPLICIT_SHELL_OK\\n'";
+            match shell {
+                LocalShell::Zsh => command.args(["-f", "-c", probe]),
+                LocalShell::Bash => command.args(["--noprofile", "--norc", "-c", probe]),
+                _ => command.args(["-c", probe]),
+            };
+            command.env_remove("BASH_ENV");
+            command.env_remove("ENV");
+            command.env_remove("ZDOTDIR");
             let mut child = pair
                 .slave
                 .spawn_command(command)
