@@ -1921,9 +1921,12 @@ fn host_key_policy_for(
             SshManagerError::InvalidRequest("pinned fingerprint cannot be empty".into()),
         ),
         (None, Some(fingerprint)) => Ok(HostKeyPolicy::PinnedFingerprint(fingerprint.clone())),
-        // Do not infer ~/.ssh/known_hosts. A user may opt into an explicit
-        // path above, or deliberately pin the observed fingerprint.
-        (None, None) => Ok(HostKeyPolicy::RejectUnknown),
+        // Use the user's OpenSSH known_hosts by default; unknown keys are
+        // still rejected and changed keys fail closed. A session may override
+        // this with an explicit path or pin.
+        (None, None) => Ok(HostKeyPolicy::KnownHosts(
+            mobarust_ssh::default_known_hosts_path(),
+        )),
     }
 }
 
@@ -4366,7 +4369,7 @@ mod tests {
         MAX_SERVER_ALIVE_INTERVAL_SECONDS, MAX_SSH_JUMP_HOSTS, ReconnectOutcome, SshConnectRequest,
         SshManager, SshManagerError, SshTransferRequest, TRANSFER_PROGRESS_MIN_INTERVAL,
         TransferProtocol, add_transfer_size, collect_local_files, commit_local_file,
-        local_part_path, local_resume_part_path, next_shell_reconnect_count,
+        host_key_policy_for, local_part_path, local_resume_part_path, next_shell_reconnect_count,
         reconnect_with_backoff, remote_child_path, remove_partial_download,
         remove_partial_download_path, server_alive_interval_duration,
         should_emit_transfer_progress, transfer_metrics, validate_local_file_path,
@@ -4389,6 +4392,25 @@ mod tests {
             .expect("derive resume part path");
         assert_eq!(path, std::path::Path::new("/tmp/.report.log.mobarust-part"));
         assert!(local_resume_part_path(std::path::Path::new("/")).is_err());
+    }
+
+    #[test]
+    fn missing_trust_selection_defaults_to_the_openssh_known_hosts() {
+        match host_key_policy_for(None, None).expect("default policy") {
+            mobarust_ssh::HostKeyPolicy::KnownHosts(path) => {
+                assert_eq!(
+                    path.file_name().and_then(|name| name.to_str()),
+                    Some("known_hosts")
+                );
+                assert_eq!(
+                    path.parent()
+                        .and_then(|parent| parent.file_name())
+                        .and_then(|name| name.to_str()),
+                    Some(".ssh")
+                );
+            }
+            other => panic!("unexpected default host key policy: {other:?}"),
+        }
     }
 
     #[test]

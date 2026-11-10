@@ -1220,6 +1220,13 @@ struct SshTrustRequest {
 }
 
 #[tauri::command]
+fn ssh_default_known_hosts_path() -> String {
+    mobarust_ssh::default_known_hosts_path()
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[tauri::command]
 async fn ssh_trust_unknown_host_key(request: SshTrustRequest) -> Result<(), String> {
     let path = std::path::PathBuf::from(&request.known_hosts_path);
     if !path.is_absolute() {
@@ -2056,6 +2063,7 @@ fn main() {
             network_resolve_host,
             network_check_tcp,
             ssh_inspect_host_key,
+            ssh_default_known_hosts_path,
             ssh_trust_unknown_host_key,
             network_ping_start,
             network_traceroute_start,

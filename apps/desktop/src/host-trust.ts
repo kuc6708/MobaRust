@@ -23,3 +23,13 @@ export async function reviewUnknownHostTrust(
   await actions.persist({ host: observed.host, port: observed.port, publicKey: observed.publicKey, confirmedFingerprint: observed.fingerprint, knownHostsPath: path });
   return path;
 }
+
+/** True for the backend's fail-closed unknown-host-key error. */
+export function isUnknownHostKeyError(message: string): boolean {
+  return /Unknown SSH host key/i.test(message);
+}
+
+/** True when a known host presented a different key (never auto-trusted). */
+export function isChangedHostKeyError(message: string): boolean {
+  return /HOST KEY CHANGED/i.test(message);
+}

@@ -1,5 +1,6 @@
 import { parseTerminalPreferences, resolveTerminalPreferences, type TerminalPreferences } from "./terminal-preferences";
-import { reviewUnknownHostTrust } from "./host-trust";
+import { reviewUnknownHostTrust, isUnknownHostKeyError, isChangedHostKeyError } from "./host-trust";
+import { localShellDisplayName } from "./shell-label";
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { RemoteFramebufferQueue } from "./remote-desktop-framebuffer";
@@ -365,7 +366,7 @@ function createWorkspaceTerminal(config: Partial<Omit<WorkspaceTerminal, "id" | 
   return {
     id: crypto.randomUUID(),
     instanceKey: terminalInstanceCounter,
-    label: "local shell",
+    label: localShellDisplayName({ type: "default" }, typeof navigator !== "undefined" ? navigator.platform : ""),
     remoteSessionId: null,
     remoteProtocol: null,
     localTarget: { type: "default" },
@@ -1508,6 +1509,8 @@ function App() {
   const zoomPersistTimerRef = useRef<number | null>(null);
   const [portableVaultStatus, setPortableVaultStatus] = useState<PortableVaultStatus | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [pendingHostTrust, setPendingHostTrust] = useState<SshConnectRequest | null>(null);
+  const [hostTrustBusy, setHostTrustBusy] = useState(false);
   const [sessionListError, setSessionListError] = useState<string | null>(null);
   const [sessionNotice, setSessionNotice] = useState<SessionNotice | null>(null);
   const [closing, setClosing] = useState(false);
@@ -1650,11 +1653,9 @@ function App() {
   }, [activeTerminal, activeTerminalId, terminalLayout]);
 
   const startNewTerminal = useCallback((target: LocalTerminalTarget = { type: "default" }, label?: string, terminalPreferences?: TerminalPreferences | null) => {
-    const shellLabel = target.type === "default" && target.shell && target.shell !== "default"
-      ? target.shell === "powershell" ? "PowerShell" : target.shell
-      : "local shell";
+    const shellLabel = localShellDisplayName(target, navigator.platform);
     const terminal = createWorkspaceTerminal({
-      label: label ?? (target.type === "wsl" ? `WSL · ${target.distribution}` : shellLabel),
+      label: label ?? shellLabel,
       localTarget: target,
       terminalPreferences,
     });
@@ -2457,6 +2458,7 @@ function App() {
 
   const connectSsh = useCallback(async (request: SshConnectRequest, offerSave = true, terminalPreferences?: TerminalPreferences | null) => {
     setConnectionError(null);
+    setPendingHostTrust(null);
     setSessionNotice(null);
     if (!IS_TAURI) {
       setConnectionError("SSH connections require the desktop runtime.");
@@ -2507,10 +2509,40 @@ function App() {
         }
       }
     } catch (error) {
+      const message = String(error);
       recordAudit("connectionFailed", "SSH");
-      setConnectionError(String(error));
+      setConnectionError(message);
+      setPendingHostTrust(isUnknownHostKeyError(message) ? request : null);
     }
   }, [recordAudit, refreshSavedSessions, requestTerminalFocus]);
+
+  const trustPendingHostKey = useCallback(async () => {
+    const pending = pendingHostTrust;
+    if (!pending || !IS_TAURI || hostTrustBusy) return;
+    setHostTrustBusy(true);
+    try {
+      const observation = await invoke<SshHostKeyInspection>("ssh_inspect_host_key", {
+        request: { host: pending.host, port: pending.port, timeoutMs: 10_000 },
+      });
+      const defaultPath = await invoke<string>("ssh_default_known_hosts_path");
+      const path = await reviewUnknownHostTrust(observation, {
+        choosePath: () => promptText(
+          "Known_hosts file to update (your OpenSSH known_hosts by default).",
+          pending.knownHostsPath?.trim() || defaultPath,
+        ),
+        confirm: confirmAction,
+        persist: (trust) => invoke("ssh_trust_unknown_host_key", { request: trust }),
+      });
+      if (!path) return;
+      setPendingHostTrust(null);
+      setConnectionError(null);
+      await connectSsh(pending, false);
+    } catch (error) {
+      setConnectionError(`Host key review failed: ${String(error)}`);
+    } finally {
+      setHostTrustBusy(false);
+    }
+  }, [pendingHostTrust, hostTrustBusy, connectSsh]);
 
   const connectTelnet = useCallback(async (request: TelnetConnectRequest, offerSave = true, terminalPreferences?: TerminalPreferences | null) => {
     setConnectionError(null);
@@ -3515,13 +3547,16 @@ function App() {
     if (!observed || !IS_TAURI) return;
     try {
       const path = await reviewUnknownHostTrust(observed, {
-        choosePath: () => promptText("Absolute known_hosts file path. Select this same file in your SSH session settings. Its directory must already exist.", ""),
+        choosePath: async () => {
+          const defaultPath = await invoke<string>("ssh_default_known_hosts_path");
+          return promptText("Known_hosts file to update (defaults to your OpenSSH known_hosts).", defaultPath);
+        },
         confirm: confirmAction,
         persist: (request) => invoke("ssh_trust_unknown_host_key", { request }),
       });
       if (!path) return;
       setNetworkError(null);
-      await promptText("Host key saved. Select this known_hosts file in your SSH session before reconnecting.", path.trim(), { readOnly: true });
+      await promptText("Host key saved. Sessions without an explicit trust file use this OpenSSH known_hosts; reconnect now.", path.trim(), { readOnly: true });
     } catch (error) {
       setNetworkError(String(error));
     }
@@ -4170,7 +4205,7 @@ function App() {
               <button className="primary-button" onClick={() => startNewTerminal()}><Plus size={15} /> New terminal</button>
             </div>
           </div>
-          {connectionError && !quickConnectOpen && activeView !== "files" && <div className="connect-error workspace-error" role="alert"><span>{connectionError}</span><button type="button" className="outline-button" aria-label="Dismiss error" onClick={() => setConnectionError(null)}>Dismiss</button></div>}
+          {connectionError && !quickConnectOpen && activeView !== "files" && <div className="connect-error workspace-error" role="alert"><span>{connectionError}</span>{isChangedHostKeyError(connectionError) && <span>Changed host keys cannot be trusted here; verify with the administrator.</span>}{pendingHostTrust && <button type="button" className="outline-button" onClick={() => void trustPendingHostKey()} disabled={hostTrustBusy}>{hostTrustBusy ? "Reviewing…" : "Review & trust host key…"}</button>}<button type="button" className="outline-button" aria-label="Dismiss error" onClick={() => setConnectionError(null)}>Dismiss</button></div>}
           {sessionNotice && <div className={`workspace-notice${typeof sessionNotice === "string" ? "" : " workspace-notice-review"}`} role="status">
             {typeof sessionNotice === "string" ? <CheckCircle2 size={14} /> : <CircleHelp size={14} />}
             <div><span>{typeof sessionNotice === "string" ? sessionNotice : sessionNotice.message}</span>
@@ -4204,7 +4239,7 @@ function App() {
                           <button type="button" className="terminal-tab-select" aria-pressed={selected} onClick={() => { setActiveTerminalId(terminal.id); setTerminalLayout({ kind: "pane", terminalId: terminal.id }); setActiveView("terminal"); }}>
                             <span className={`terminal-tab-dot terminal-tab-dot-${terminal.status}`} />
                             <span>{terminal.label}</span>
-                            <span className="terminal-tab-meta">{terminal.status === "connected" ? (terminal.remoteHost ? terminal.remoteProtocol : "zsh") : terminal.status}</span>
+                            <span className="terminal-tab-meta">{terminal.status === "connected" ? (terminal.remoteHost ? terminal.remoteProtocol : localShellDisplayName(terminal.localTarget, navigator.platform)) : terminal.status}</span>
                           </button>
                           <button type="button" className="terminal-tab-close" aria-label={`Close ${terminal.label}`} title={`Close ${terminal.label}`} onClick={() => { closeTerminal(terminal.id); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(".terminal-tab.selected .terminal-tab-select")?.focus()); }}><X size={13} /></button>
                         </div>
@@ -4248,7 +4283,7 @@ function App() {
                 <div><div className="machine-name">{remoteHost ?? describeLocalMachine(appPlatform, appArch).name}</div><div className="machine-detail">{remoteHost ? (remoteProtocol === "telnet" ? "Telnet · unencrypted" : remoteProtocol === "serial" ? "Serial · device" : remoteProtocol === "rdp" ? "RDP · isolated helper" : remoteProtocol === "vnc" ? "VNC · isolated helper" : "SSH · verified transport") : describeLocalMachine(appPlatform, appArch).detail}</div></div>
                 <span className={`machine-live machine-state-${terminalStatus}`}>{terminalStatus === "connected" ? "LIVE" : terminalStatus.toUpperCase()}</span>
               </div>
-              <div className="rail-group"><div className="rail-label">Runtime</div><Metric label="Surface" value={remoteProtocol === "rdp" || remoteProtocol === "vnc" ? "remote desktop" : remoteHost ? "remote shell" : "zsh"} /><Metric label="Renderer" value={remoteProtocol === "rdp" || remoteProtocol === "vnc" ? "RGBA framebuffer" : "xterm-256color"} /><Metric label="Process" value={terminalStatus === "connected" ? "running" : "idle"} /></div>
+              <div className="rail-group"><div className="rail-label">Runtime</div><Metric label="Surface" value={remoteProtocol === "rdp" || remoteProtocol === "vnc" ? "remote desktop" : remoteHost ? "remote shell" : localShellDisplayName(activeTerminal?.localTarget ?? { type: "default" }, navigator.platform)} /><Metric label="Renderer" value={remoteProtocol === "rdp" || remoteProtocol === "vnc" ? "RGBA framebuffer" : "xterm-256color"} /><Metric label="Process" value={terminalStatus === "connected" ? "running" : "idle"} /></div>
               <div className="rail-group"><div className="rail-label">Workspace notes</div><p className="rail-copy">Use tabs and split panes to keep work in view. Files and SSH tunnels follow the active SSH session.</p></div>
               <div className="rail-callout"><div className="callout-icon"><Network size={15} /></div><div><strong>{remoteHost && terminalStatus !== "connected" ? `${remoteProtocol?.toUpperCase()} ${terminalStatus}` : remoteProtocol === "telnet" ? "Telnet transport active" : remoteProtocol === "serial" ? "Serial transport active" : remoteProtocol === "rdp" ? "RDP helper active" : remoteProtocol === "vnc" ? "VNC helper active" : remoteHost ? "SSH transport active" : "Connect securely"}</strong><p>{remoteHost && terminalStatus !== "connected" ? "Transport is not connected. Reopen the saved session or use Quick connect to try again." : remoteProtocol === "telnet" ? "This legacy terminal is unencrypted; use SSH for protected administration." : remoteProtocol === "serial" ? "Serial traffic depends on the connected hardware; MobaRust does not add encryption." : remoteProtocol === "rdp" ? "The remote desktop is isolated behind the native helper boundary; certificate and gateway options remain explicit." : remoteProtocol === "vnc" ? "The VNC framebuffer and input stay in the native helper boundary; legacy VNC transport is not SSH-level encryption." : remoteHost ? "Host-key verification and native PTY negotiation are active for this shell." : "Known-host verification and PTY negotiation are ready for a real SSH connection."}</p><button onClick={() => setQuickConnectOpen(true)}>{remoteHost ? "Open another session" : "Quick connect"} <ExternalLink size={12} /></button></div></div>
             </section>
@@ -5481,7 +5516,7 @@ function SessionEditor({ session, onClose, onSave }: { session: SavedSession; on
             <label>SSH host<input required value={hostname} onChange={(event) => setHostname(event.target.value)} /></label>
             <label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} /></label>
             <label>SSH port<input type="number" min="1" max="65535" value={sshPort} onChange={(event) => setSshPort(event.target.value)} /></label>
-            <label className="quick-connect-wide">Known hosts file<input value={trustPath} onChange={(event) => setTrustPath(event.target.value)} /><small>Explicit trust file only; leaving both trust fields empty rejects unknown keys.</small></label>
+            <label className="quick-connect-wide">Known hosts file<input value={trustPath} onChange={(event) => setTrustPath(event.target.value)} /><small>Leaving both empty uses your OpenSSH known_hosts; unknown keys are still rejected.</small></label>
             <label className="quick-connect-wide">SHA256 fingerprint pin<input value={trustPin} onChange={(event) => setTrustPin(event.target.value)} placeholder="SHA256:…" /><small>Verify this fingerprint through an independent channel.</small></label>
             {jumpProfiles.map((hop, index) => <div className="quick-connect-wide" key={index}>
               <strong>Bastion {index + 1}: {hop.username}@{hop.host}:{hop.port}</strong>
@@ -6043,7 +6078,7 @@ function QuickConnectDialog({ error, onClose, onConnectSsh, onConnectTelnet, onC
                   <label className="quick-connect-wide">
                     Known hosts path <span className="optional">optional · explicit only</span>
                     <input value={knownHostsPath} onChange={(event) => setKnownHostsPath(event.target.value)} placeholder="/path/to/known_hosts" />
-                    <small>Empty means unknown host keys are rejected without reading ~/.ssh/known_hosts.</small>
+                    <small>Empty uses your OpenSSH known_hosts; unknown keys are still rejected.</small>
                   </label>
                   <label className="quick-connect-wide">
                     Pinned SHA-256 fingerprint <span className="optional">optional</span>

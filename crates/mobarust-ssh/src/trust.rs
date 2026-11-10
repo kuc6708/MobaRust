@@ -30,6 +30,27 @@ pub fn trust_unknown_host_key(
     if key.fingerprint(HashAlg::Sha256).to_string() != confirmed_fingerprint {
         return Err("Confirmed fingerprint does not match the public key".into());
     }
+    // Create the user's .ssh directory when trusting the default OpenSSH
+    // store; keep the directory private on Unix.
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        match fs::symlink_metadata(parent) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err("Trust file directory is not a directory".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir_all(parent)
+                    .map_err(|_| "Cannot create trust directory".to_owned())?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+                }
+            }
+            Err(_) => return Err("Cannot inspect trust directory".into()),
+        }
+    }
     let mut lock_name = path.as_os_str().to_os_string();
     lock_name.push(".mobarust-lock");
     let lock_path = std::path::PathBuf::from(lock_name);
@@ -215,6 +236,25 @@ mod tests {
             .unwrap()
         );
     }
+    #[test]
+    fn creates_missing_ssh_directory_and_accepts_crlf_or_missing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".ssh").join("known_hosts");
+        trust_unknown_host_key("example.test", 22, KEY, &fingerprint(), &path).unwrap();
+        assert!(path.is_file());
+        let key = PublicKey::from_openssh(KEY).unwrap();
+        fs::write(&path, format!("example.test {KEY}\r\n")).unwrap();
+        assert!(
+            russh::keys::check_known_hosts_path("example.test", 22, &key, &path).unwrap(),
+            "Windows/CRLF known_hosts must match"
+        );
+        let missing = dir.path().join("missing").join("known_hosts");
+        assert!(
+            !russh::keys::check_known_hosts_path("example.test", 22, &key, &missing).unwrap(),
+            "a missing known_hosts must be treated as no known keys"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn rejects_symlink_trust_destination() {

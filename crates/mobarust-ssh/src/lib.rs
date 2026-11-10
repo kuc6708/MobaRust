@@ -62,6 +62,28 @@ pub enum HostKeyPolicy {
     RejectUnknown,
 }
 
+/// Default OpenSSH user known_hosts path used when a session does not set its
+/// own trust file or pin. Unknown and changed keys are still rejected.
+pub fn default_known_hosts_path() -> std::path::PathBuf {
+    known_hosts_under(home_directory())
+}
+
+fn home_directory() -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("USERPROFILE").map(std::path::PathBuf::from)
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME").map(std::path::PathBuf::from)
+    }
+}
+
+fn known_hosts_under(home: Option<std::path::PathBuf>) -> std::path::PathBuf {
+    home.map(|home| home.join(".ssh").join("known_hosts"))
+        .unwrap_or_else(|| std::path::PathBuf::from("known_hosts"))
+}
+
 #[derive(Debug, Error)]
 pub enum SshError {
     #[error("SSH host and username are required")]
@@ -2127,7 +2149,9 @@ fn map_connect_error(error: anyhow::Error) -> SshError {
         return match error {
             russh::Error::IO(error) => map_io_connect_error(error),
             russh::Error::ConnectionTimeout => SshError::Timeout,
-            russh::Error::HUP | russh::Error::Disconnect => SshError::ConnectionFailed,
+            russh::Error::HUP | russh::Error::Disconnect => {
+                SshError::Handshake("SSH server closed the connection during handshake".into())
+            }
             _ => SshError::Handshake("SSH handshake failed".into()),
         };
     }
@@ -4129,13 +4153,34 @@ mod tests {
     }
 
     #[test]
+    fn default_known_hosts_path_is_the_openssh_user_store() {
+        let path = known_hosts_under(Some(std::path::PathBuf::from("/home/fixture")));
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("known_hosts")
+        );
+        assert_eq!(
+            path.parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str()),
+            Some(".ssh")
+        );
+        assert_eq!(
+            known_hosts_under(None),
+            std::path::PathBuf::from("known_hosts")
+        );
+    }
+
+    #[test]
     fn observed_host_key_does_not_turn_a_transport_failure_into_a_trust_rejection() {
         let observation = Arc::new(Mutex::new(Some("SHA256:fixture".to_owned())));
         let result = map_connect_result(
             Ok(Err(anyhow::Error::new(russh::Error::Disconnect))),
             observation,
         );
-        assert!(matches!(result, Err(SshError::ConnectionFailed)));
+        // A transport closure is not a trust decision; report the handshake
+        // closure rather than mislabeling it as a trust or network failure.
+        assert!(matches!(result, Err(SshError::Handshake(_))));
     }
 
     #[test]

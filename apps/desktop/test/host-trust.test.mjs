@@ -1,6 +1,6 @@
 import console from 'node:console';
 import assert from 'node:assert/strict';
-import { reviewUnknownHostTrust } from '../src/host-trust.ts';
+import { reviewUnknownHostTrust, isUnknownHostKeyError, isChangedHostKeyError } from '../src/host-trust.ts';
 
 const observed = { host: 'fixture.test', port: 2222, algorithm: 'ssh-ed25519', fingerprint: 'SHA256:fixture', publicKey: 'fixture-public-key' };
 for (const path of [null, '', '  ']) {
@@ -32,3 +32,9 @@ assert.equal(await reviewUnknownHostTrust(snapshot, {
 }), '/fixture/known_hosts');
 assert.equal(writes, 1);
 console.log('Host trust: cancellation, explicit confirmation, complete identity and immutable target passed');
+
+assert.equal(isUnknownHostKeyError('Unknown SSH host key for fixture.test:22 (ssh-ed25519); observed fingerprint: SHA256:x'), true);
+assert.equal(isUnknownHostKeyError('SSH authentication was rejected'), false);
+assert.equal(isChangedHostKeyError('SSH host key CHANGED for fixture.test:22 (ssh-ed25519)'), true);
+assert.equal(isChangedHostKeyError('Unknown SSH host key for fixture.test:22'), false);
+console.log('Host trust error classification: unknown, changed and other are distinct');
