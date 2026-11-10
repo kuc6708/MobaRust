@@ -117,8 +117,12 @@ signing and clean-install testing remain separate gates.
   diagnostics headings `h3`→`h2` (heading order), right rail `aside`→labelled
   `section`, and dialog roles moved from `<form>` onto the overlay. Static DOM
   checks showed 0 missing accessible names/`alt`, 0 unnamed dialogs and 0
-  duplicate ids. The session editor, tunnel and remote-editor dialogs need an
-  SSH/session context to open; high-DPI and screen-reader acceptance remain.
+  duplicate ids. High-DPI emulation at DPR 1, 1.5 and 2 (1280x800) shows no
+  horizontal overflow (document width 1265) and 0 violations, with the Settings
+  dialog fitting each factor. Connection status, the transfer count and the
+  diagnostics scan state now expose `role="status"`/`aria-live` (errors are
+  already `role="alert"`). The session editor, tunnel and remote-editor dialogs
+  need an SSH/session context to open; screen-reader acceptance remains.
 - `cargo xtask check` and `cargo xtask check-rust` under `umask 022`: **exit 0**
   (formatting, full workspace tests, Clippy, frontend install/test/check/lint/
   build, release-asset tests, RDP/VNC helper checks, package layouts and fuzz).
@@ -146,9 +150,9 @@ native-window behavior remains untested here.
 
 ### Not yet run on this host
 
-Remaining accessibility review (session editor/tunnel/WSL/remote-editor dialogs,
-high-DPI, screen-reader), Windows/macOS runtime runners, clean-install testing,
-signing and notarization.
+Remaining accessibility review (SSH-only dialogs, screen reader), Windows/macOS
+runtime runners (see [platform runtime matrix](platform-runtime-matrix.md)),
+clean-install testing, signing and notarization.
 
 ## Release gates
 

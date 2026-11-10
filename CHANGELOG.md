@@ -46,6 +46,10 @@
   and symlinked installer inputs are refused. Final deliverables are copied and
   checksummed in `target/debug/verified-installers`.
 
+- Accessibility follow-up: `role="status"`/`aria-live` on connection status,
+  transfer count and diagnostics scan state; high-DPI emulation (DPR 1/1.5/2)
+  shows no horizontal overflow. Add `docs/testing/platform-runtime-matrix.md`
+  documenting the CI matrix and per-OS manual runtime acceptance.
 - Fix the synthetic X11 fixture: sshd now uses `AddressFamily inet` (the host
   could not allocate the display socket with the default family, and ports
   6010-6012 were occupied), and the test xauth wrapper also handles sshd's
