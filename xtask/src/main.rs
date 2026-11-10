@@ -2047,11 +2047,10 @@ mod tests {
     fn private_key_marker_allowance_requires_exact_indexed_parser() {
         let parser = include_str!("../../vendor/russh/src/keys/format/mod.rs");
         let markers = "vendor/russh/src/keys/format/mod.rs\0 73:PEM delimiter";
+        let lf = parser.replace("\r\n", "\n");
         assert!(reviewed_parser_markers(markers, parser));
-        assert!(reviewed_parser_markers(
-            markers,
-            &parser.replace('\n', "\r\n")
-        ));
+        assert!(reviewed_parser_markers(markers, &lf));
+        assert!(reviewed_parser_markers(markers, &lf.replace('\n', "\r\n")));
         assert!(!reviewed_parser_markers(markers, &format!("{parser}\n")));
         assert!(!reviewed_parser_markers(
             &format!("{markers}\nother.rs:1:key material"),

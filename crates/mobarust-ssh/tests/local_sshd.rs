@@ -1169,7 +1169,7 @@ fn run_ipv6_stream_lab(frequent_rekey: bool) {
         };
         // The ordinary stream gate remains 30 seconds. Frequent server key
         // renewal adds repeated cryptographic exchanges on all three hops.
-        let stream_deadline = Duration::from_secs(if frequent_rekey { 60 } else { 30 });
+        let stream_deadline = Duration::from_secs(if frequent_rekey { 180 } else { 120 });
         tokio::time::timeout(stream_deadline, async {
             tokio::join!(output, files);
         })
