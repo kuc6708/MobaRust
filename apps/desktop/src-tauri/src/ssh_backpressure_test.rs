@@ -759,7 +759,26 @@ async fn tunnel_workers_are_owned_and_joined_before_transport_cleanup() {
                 // Retain this port until the connection task has actually
                 // completed; parallel ephemeral fixtures may otherwise take it.
                 drop(target.await.unwrap());
-                drop(TcpListener::bind(target_address.unwrap()).await.expect("owned TCP target listener released"));
+                let target_address = target_address.unwrap();
+                // Accepted sockets can leave the port in TIME_WAIT briefly;
+                // retry so the assertion tests release rather than timing.
+                let mut last_error = None;
+                for _ in 0..40 {
+                    match TcpListener::bind(target_address).await {
+                        Ok(listener) => {
+                            drop(listener);
+                            last_error = None;
+                            break;
+                        }
+                        Err(error) => {
+                            last_error = Some(error);
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                        }
+                    }
+                }
+                if let Some(error) = last_error {
+                    panic!("owned TCP target listener released: {error}");
+                }
             }
             if kind == "remote" {
                 assert!(
