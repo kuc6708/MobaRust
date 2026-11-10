@@ -4463,6 +4463,7 @@ function RemoteFilesView({ entries, path, status, error, localDropActive, transf
 }
 
 function RemoteEditorModal({ document, onClose, onReload, onSave, onSaveAs }: { document: RemoteTextDocument; onClose: () => void; onReload: (dirty: boolean) => Promise<RemoteTextDocument | null>; onSave: (content: string, encoding: RemoteTextDocument["encoding"]) => Promise<void>; onSaveAs: (path: string, content: string, encoding: RemoteTextDocument["encoding"], overwrite: boolean) => Promise<void> }) {
+  const dialogRef = useDialogAutoFocus<HTMLElement>();
   const highlightRef = useRef<HTMLPreElement>(null);
   const [content, setContent] = useState(document.content);
   const [encoding, setEncoding] = useState<RemoteTextDocument["encoding"]>(document.encoding);
@@ -4538,7 +4539,7 @@ function RemoteEditorModal({ document, onClose, onReload, onSave, onSaveAs }: { 
     highlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
   };
 
-  return <div className="palette-backdrop" role="presentation" onMouseDown={close}><section className="remote-editor-modal" role="dialog" aria-modal="true" aria-label={`Edit ${document.path}`} onMouseDown={(event) => event.stopPropagation()}>
+  return <div className="palette-backdrop" role="presentation" onMouseDown={close}><section ref={dialogRef} tabIndex={-1} className="remote-editor-modal" role="dialog" aria-modal="true" aria-label={`Edit ${document.path}`} onMouseDown={(event) => event.stopPropagation()}>
     <div className="session-editor-heading"><div><span className="eyebrow">REMOTE FILE / {encoding.toUpperCase()}</span><h2>{document.path}</h2><p>Bounded editor buffer · {formatBytes(document.size)} · revision {document.revision.slice(0, 18)}…</p></div><button type="button" className="icon-button" aria-label="Close remote editor" onClick={close} disabled={busy}><X size={17} /></button></div>
     <div className="remote-editor-toolbar"><div className="remote-editor-search"><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Find" aria-label="Find in remote file" /><input value={replacement} onChange={(event) => setReplacement(event.target.value)} placeholder="Replace with" aria-label="Replacement text" /><label className="remote-editor-case"><input type="checkbox" checked={matchCase} onChange={(event) => setMatchCase(event.target.checked)} /> Aa</label><button type="button" className="outline-button" onClick={replaceAll} disabled={!searchQuery || matchCount === 0 || busy}>Replace all</button><span>{searchQuery ? `${matchCount.toLocaleString()} match${matchCount === 1 ? "" : "es"}` : "Search"}</span></div><div className="remote-editor-meta"><label>Save encoding<select value={encoding} onChange={(event) => setEncoding(event.target.value as RemoteTextDocument["encoding"])} aria-label="Remote file save encoding" disabled={busy}><option value="utf-8">UTF-8</option><option value="windows-1252">Windows-1252</option></select></label><span>{lineCount.toLocaleString()} lines</span><span className={dirty ? "remote-editor-dirty" : ""}>{dirty ? "Unsaved changes" : "No local changes"}</span></div></div>
     {error && <div className="connect-error remote-editor-error" role="alert"><CircleX size={14} /><span>{error.includes("changed since") ? "The remote file changed after it was opened. Reload it before saving to avoid overwriting someone else’s work." : error.includes("target already exists") ? "That remote target already exists. Choose Replace when using Save as if overwriting is intentional." : error}</span></div>}
@@ -4590,6 +4591,7 @@ function TransferPanel({ transfers, onCancelTransfer, onRetryTransfer }: { trans
 }
 
 function TunnelDialog({ kind, onClose, onStart }: { kind: "local" | "remote" | "dynamic"; onClose: () => void; onStart: (request: { bindHost: string; bindPort: number; targetHost?: string; targetPort?: number }) => Promise<void> }) {
+  const dialogRef = useDialogAutoFocus<HTMLDivElement>();
   const [bindHost, setBindHost] = useState("127.0.0.1");
   const [bindPort, setBindPort] = useState("0");
   const [targetHost, setTargetHost] = useState("127.0.0.1");
@@ -4611,7 +4613,7 @@ function TunnelDialog({ kind, onClose, onStart }: { kind: "local" | "remote" | "
     catch (failure) { setError(String(failure)); }
     finally { setBusy(false); }
   };
-  return <div className="palette-backdrop" role="dialog" aria-modal="true" aria-label={title} onMouseDown={() => { if (!busy) onClose(); }}>
+  return <div ref={dialogRef} tabIndex={-1} className="palette-backdrop" role="dialog" aria-modal="true" aria-label={title} onMouseDown={() => { if (!busy) onClose(); }}>
     <form className="quick-connect" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => void submit(event)} onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
       <div className="session-editor-heading"><div><span className="eyebrow">SSH / PORT FORWARDING</span><h2>{title}</h2><p>{kind === "remote" ? "Listen on the SSH server and reach a service from this computer." : kind === "dynamic" ? "Create a local SOCKS5 listener through this SSH session." : "Listen on this computer and reach a service from the SSH server."}</p></div><button type="button" className="icon-button" aria-label="Close tunnel dialog" disabled={busy} onClick={onClose}><X size={17} /></button></div>
       <div className="quick-connect-grid">
@@ -4735,14 +4737,14 @@ function NetworkDiagnosticsView({ host, port, timeout, status, addresses, result
     <div className="diagnostics-trace-options"><label>Traceroute max hops<input inputMode="numeric" pattern="[0-9]+" value={traceMaxHops} onChange={(event) => onTraceMaxHopsChange(event.target.value)} disabled={diagnosticActive} /><small>1–32 hops; platform permissions may limit results.</small></label></div>
     {error && <div className="connect-error diagnostics-error" role="alert"><CircleX size={14} /><span>{error}</span></div>}
     <div className="diagnostics-results">
-      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">DNS / ADDRESSES</span><Search size={15} /></div><h3>{addresses.length > 0 ? `${addresses.length} address${addresses.length === 1 ? "" : "es"}` : "No lookup yet"}</h3>{addresses.length > 0 ? <div className="diagnostic-addresses">{addresses.map((address) => <code key={address}>{address}</code>)}</div> : <p>Enter a target and run an explicit lookup. Results are kept in this view only.</p>}</article>
-      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">TCP / REACHABILITY</span><Network size={15} /></div>{result ? <><h3>{result.host}:{result.port}</h3><div className={`diagnostic-result diagnostic-result-${result.status}`}><span /> {result.status === "open" ? "Open" : result.status === "closed" ? "Closed" : result.status === "timed-out" ? "Timed out" : "Failed"}</div><p>The result describes TCP reachability only; it does not authenticate or identify the service.</p></> : <><h3>No TCP check yet</h3><p>Choose a port explicitly, then run a bounded connection check.</p></>}</article>
-      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">SSH / HOST KEY</span><KeyRound size={15} /></div>{fingerprint ? <><h3>{fingerprint.host}:{fingerprint.port}</h3><div className="diagnostic-fingerprint"><code>{fingerprint.algorithm} · {fingerprint.fingerprint}</code></div><p>Observed during one unauthenticated SSH handshake. Nothing was added to known_hosts.</p><button className="outline-button" onClick={onTrustFingerprint} disabled={status === "running"}>Review and trust unknown key…</button></> : <><h3>No SSH key observed</h3><p>Inspect an explicit SSH target to read its server fingerprint without using credentials.</p></>}</article>
-      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">ICMP / PING</span><Radio size={15} /></div>{pingResult ? <><h3>{pingResult.reachable ? "Reachable" : "No reply"}</h3><div className={`diagnostic-result ${pingResult.reachable ? "diagnostic-result-open" : "diagnostic-result-closed"}`}><span /> {pingResult.elapsedMs} ms observed</div><p>One platform-native echo request was sent to the explicit target.</p></> : <><h3>No ping yet</h3><p>Ping uses one bounded platform-native probe and can be cancelled.</p></>}</article>
-      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">PATH / TRACEROUTE</span><Activity size={15} /></div>{tracerouteResult ? <><h3>{tracerouteResult.reached ? "Destination reached" : "Path incomplete"}</h3><div className={`diagnostic-result ${tracerouteResult.reached ? "diagnostic-result-open" : "diagnostic-result-timed-out"}`}><span /> {tracerouteResult.hops.length} hop lines · {tracerouteResult.elapsedMs} ms</div><pre className="diagnostic-hops">{tracerouteResult.hops.length > 0 ? tracerouteResult.hops.join("\n") : "No hop output returned."}</pre></> : <><h3>No route trace yet</h3><p>Traceroute is bounded to the selected maximum hops and timeout.</p></>}</article>
+      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">DNS / ADDRESSES</span><Search size={15} /></div><h2>{addresses.length > 0 ? `${addresses.length} address${addresses.length === 1 ? "" : "es"}` : "No lookup yet"}</h2>{addresses.length > 0 ? <div className="diagnostic-addresses">{addresses.map((address) => <code key={address}>{address}</code>)}</div> : <p>Enter a target and run an explicit lookup. Results are kept in this view only.</p>}</article>
+      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">TCP / REACHABILITY</span><Network size={15} /></div>{result ? <><h2>{result.host}:{result.port}</h2><div className={`diagnostic-result diagnostic-result-${result.status}`}><span /> {result.status === "open" ? "Open" : result.status === "closed" ? "Closed" : result.status === "timed-out" ? "Timed out" : "Failed"}</div><p>The result describes TCP reachability only; it does not authenticate or identify the service.</p></> : <><h2>No TCP check yet</h2><p>Choose a port explicitly, then run a bounded connection check.</p></>}</article>
+      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">SSH / HOST KEY</span><KeyRound size={15} /></div>{fingerprint ? <><h2>{fingerprint.host}:{fingerprint.port}</h2><div className="diagnostic-fingerprint"><code>{fingerprint.algorithm} · {fingerprint.fingerprint}</code></div><p>Observed during one unauthenticated SSH handshake. Nothing was added to known_hosts.</p><button className="outline-button" onClick={onTrustFingerprint} disabled={status === "running"}>Review and trust unknown key…</button></> : <><h2>No SSH key observed</h2><p>Inspect an explicit SSH target to read its server fingerprint without using credentials.</p></>}</article>
+      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">ICMP / PING</span><Radio size={15} /></div>{pingResult ? <><h2>{pingResult.reachable ? "Reachable" : "No reply"}</h2><div className={`diagnostic-result ${pingResult.reachable ? "diagnostic-result-open" : "diagnostic-result-closed"}`}><span /> {pingResult.elapsedMs} ms observed</div><p>One platform-native echo request was sent to the explicit target.</p></> : <><h2>No ping yet</h2><p>Ping uses one bounded platform-native probe and can be cancelled.</p></>}</article>
+      <article className="diagnostic-card"><div className="diagnostic-card-heading"><span className="eyebrow">PATH / TRACEROUTE</span><Activity size={15} /></div>{tracerouteResult ? <><h2>{tracerouteResult.reached ? "Destination reached" : "Path incomplete"}</h2><div className={`diagnostic-result ${tracerouteResult.reached ? "diagnostic-result-open" : "diagnostic-result-timed-out"}`}><span /> {tracerouteResult.hops.length} hop lines · {tracerouteResult.elapsedMs} ms</div><pre className="diagnostic-hops">{tracerouteResult.hops.length > 0 ? tracerouteResult.hops.join("\n") : "No hop output returned."}</pre></> : <><h2>No route trace yet</h2><p>Traceroute is bounded to the selected maximum hops and timeout.</p></>}</article>
     </div>
     <section className="diagnostics-scan" aria-label="Bounded TCP port scan">
-      <div className="diagnostics-scan-heading"><div><span className="eyebrow">TCP / BOUNDED SCAN</span><h3>Scan an explicit range</h3><p>Maximum 4096 ports, maximum 128 concurrent checks, and a visible cancellation control.</p></div><span className={`diagnostics-scan-state scan-${scanStatus}`}>{scanStatus === "idle" ? "Ready" : scanStatus}</span></div>
+      <div className="diagnostics-scan-heading"><div><span className="eyebrow">TCP / BOUNDED SCAN</span><h2>Scan an explicit range</h2><p>Maximum 4096 ports, maximum 128 concurrent checks, and a visible cancellation control.</p></div><span className={`diagnostics-scan-state scan-${scanStatus}`}>{scanStatus === "idle" ? "Ready" : scanStatus}</span></div>
       <div className="diagnostics-scan-fields"><label>Start port<input inputMode="numeric" pattern="[0-9]+" value={scanStart} onChange={(event) => onScanStartChange(event.target.value)} disabled={scanActive} /></label><label>End port<input inputMode="numeric" pattern="[0-9]+" value={scanEnd} onChange={(event) => onScanEndChange(event.target.value)} disabled={scanActive} /></label><label>Concurrency<input inputMode="numeric" pattern="[0-9]+" value={scanConcurrency} onChange={(event) => onScanConcurrencyChange(event.target.value)} disabled={scanActive} /></label><div className="diagnostics-scan-action">{scanActive ? <button className="outline-button" onClick={onCancelScan}><CircleX size={14} /> Cancel scan</button> : <button className="primary-button" onClick={onStartScan}><Search size={14} /> Start bounded scan</button>}</div></div>
       {(scanStatus !== "idle" || scanResults.length > 0) && <div className="diagnostics-scan-progress"><div className="diagnostics-progress-label"><span>{scanId ? `Scan ${scanId.slice(0, 8)}` : "Scan"}</span><strong>{scanScanned}/{scanTotal || "—"} · {scanProgress}%</strong></div><div className="diagnostics-progress-track"><span style={{ width: `${scanProgress}%` }} /></div><div className="diagnostics-open-results">{scanResults.length > 0 ? scanResults.filter((item) => item.status === "open").map((item) => <code key={item.port}>{item.port} open</code>) : <span>No open ports reported yet.</span>}</div></div>}
     </section>
@@ -4865,6 +4867,7 @@ function HelpModal({ keyboard, onClose }: { keyboard: AppSettings["keyboard"]; o
 }
 
 function CommandPalette({ keyboard, onClose, onNewTerminal, onNewShell, onNewWslTerminal, onQuickConnect, onOpenFiles, onOpenSettings, onOpenCredentials, onOpenSnippets, onOpenMacros, onOpenAudit, onToggleSidebar, onFocusPane }: { keyboard: AppSettings["keyboard"]; onClose: () => void; onNewTerminal: () => void; onNewShell: (shell: LocalShellChoice) => void; onNewWslTerminal: () => void; onQuickConnect: () => void; onOpenFiles: () => void; onOpenSettings: () => void; onOpenCredentials: () => void; onOpenSnippets: () => void; onOpenMacros: () => void; onOpenAudit: () => void; onToggleSidebar: () => void; onFocusPane: () => void }) {
+  const dialogRef = useDialogAutoFocus<HTMLElement>();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const commands = [
@@ -4912,10 +4915,11 @@ function CommandPalette({ keyboard, onClose, onNewTerminal, onNewShell, onNewWsl
     }
   };
 
-  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={(event) => event.stopPropagation()}><div className="palette-search"><Search size={17} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={handleKeyDown} placeholder="Search commands" aria-label="Search commands" aria-controls="command-palette-list" aria-activedescendant={commands[activeIndex] ? `command-${activeIndex}` : undefined} /><kbd>ESC</kbd></div><div className="palette-section-label">Actions</div>{commands.length > 0 ? <div id="command-palette-list" role="listbox" aria-label="Available commands">{commands.map((action, index) => { const ActionIcon = action.icon; return <button key={action.label} id={`command-${index}`} type="button" role="option" aria-selected={index === activeIndex} className={`palette-item ${index === activeIndex ? "active" : ""}`} onMouseEnter={() => setActiveIndex(index)} onClick={() => execute(index)}><ActionIcon size={16} /><span>{action.label}</span><kbd>{action.hint}</kbd></button>; })}</div> : <div className="palette-empty">No matching commands</div>}<div className="palette-footer"><span>Navigate <b>↑ ↓</b></span><span>Run <b>↵</b></span><span>Close <b>esc</b></span></div></section></div>;
+  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section ref={dialogRef} tabIndex={-1} className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={(event) => event.stopPropagation()}><div className="palette-search"><Search size={17} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={handleKeyDown} placeholder="Search commands" aria-label="Search commands" aria-controls="command-palette-list" aria-activedescendant={commands[activeIndex] ? `command-${activeIndex}` : undefined} /><kbd>ESC</kbd></div><div className="palette-section-label">Actions</div>{commands.length > 0 ? <div id="command-palette-list" role="listbox" aria-label="Available commands">{commands.map((action, index) => { const ActionIcon = action.icon; return <button key={action.label} id={`command-${index}`} type="button" role="option" aria-selected={index === activeIndex} className={`palette-item ${index === activeIndex ? "active" : ""}`} onMouseEnter={() => setActiveIndex(index)} onClick={() => execute(index)}><ActionIcon size={16} /><span>{action.label}</span><kbd>{action.hint}</kbd></button>; })}</div> : <div className="palette-empty">No matching commands</div>}<div className="palette-footer"><span>Navigate <b>↑ ↓</b></span><span>Run <b>↵</b></span><span>Close <b>esc</b></span></div></section></div>;
 }
 
 function WslTerminalDialog({ onClose, onSelect }: { onClose: () => void; onSelect: (distribution: string) => void }) {
+  const dialogRef = useDialogAutoFocus<HTMLElement>();
   const [distributions, setDistributions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -4947,7 +4951,7 @@ function WslTerminalDialog({ onClose, onSelect }: { onClose: () => void; onSelec
     : error;
 
   return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
-    <section className="quick-connect" role="dialog" aria-modal="true" aria-label="New WSL terminal" onMouseDown={(event) => event.stopPropagation()}>
+    <section ref={dialogRef} tabIndex={-1} className="quick-connect" role="dialog" aria-modal="true" aria-label="New WSL terminal" onMouseDown={(event) => event.stopPropagation()}>
       <div className="quick-connect-heading">
         <div>
           <span className="eyebrow">LOCAL / WINDOWS</span>
@@ -4971,6 +4975,7 @@ function WslTerminalDialog({ onClose, onSelect }: { onClose: () => void; onSelec
 }
 
 function CredentialVaultModal({ portableVaultStatus, onClose, onSave, onDelete, onPortableSave, onPortableDelete }: { portableVaultStatus: PortableVaultStatus | null; onClose: () => void; onSave: (credentialId: string, secret: string) => Promise<void>; onDelete: (credentialId: string) => Promise<void>; onPortableSave: (credentialId: string, secret: string) => Promise<void>; onPortableDelete: (credentialId: string) => Promise<void> }) {
+  const dialogRef = useDialogAutoFocus<HTMLDivElement>();
   const [credentialId, setCredentialId] = useState("");
   const [secret, setSecret] = useState("");
   const [backend, setBackend] = useState<VaultBackend>("platform");
@@ -5008,7 +5013,7 @@ function CredentialVaultModal({ portableVaultStatus, onClose, onSave, onDelete, 
     }
   };
 
-  return <div className="palette-backdrop" role="dialog" aria-modal="true" aria-label="Credential vault" onMouseDown={close}><form className="credential-modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={save}>
+  return <div ref={dialogRef} tabIndex={-1} className="palette-backdrop" role="dialog" aria-modal="true" aria-label="Credential vault" onMouseDown={close}><form className="credential-modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={save}>
     <div className="session-editor-heading"><div><span className="eyebrow">NATIVE SECURITY</span><h2>Credential vault</h2><p>Save an opaque reference. Stored secrets remain in native storage and are never listed or returned to React.</p></div><button type="button" className="icon-button" aria-label="Close credential vault" onClick={close}><X size={17} /></button></div>
     <div className="credential-modal-body">
       <label>Credential reference<input required autoFocus value={credentialId} onChange={(event) => setCredentialId(event.target.value)} placeholder="prod-bastion-password" autoComplete="off" /><small>Letters, numbers, dots, dashes, and underscores only.</small></label>
@@ -5191,6 +5196,7 @@ function SnippetForm({ snippet, isNew, onSave, onDelete, onCopy }: { snippet: Sn
 }
 
 function SessionEditor({ session, onClose, onSave }: { session: SavedSession; onClose: () => void; onSave: (session: SavedSession) => void }) {
+  const dialogRef = useDialogAutoFocus<HTMLDivElement>();
   const [preferencesEnabled, setPreferencesEnabled] = useState(Boolean(session.terminal_preferences));
   const [profileFont, setProfileFont] = useState(String(session.terminal_preferences?.fontSize ?? 13));
   const [profileScrollback, setProfileScrollback] = useState(String(session.terminal_preferences?.scrollbackLines ?? 5000));
@@ -5342,7 +5348,7 @@ function SessionEditor({ session, onClose, onSave }: { session: SavedSession; on
     : session.auth.kind === "keyboardInteractivePrompt" ? "Ask each SSH challenge" : session.auth.kind === "none" ? "No authentication" : session.auth.kind === "agent" ? "SSH agent" : session.auth.kind === "password" ? "Vault credential reference" : session.auth.kind === "keyboardInteractive" ? "Keyboard-interactive vault response" : "Private key reference";
 
   return (
-    <div className="palette-backdrop" role="dialog" aria-modal="true" aria-label={`Edit ${session.name}`} onMouseDown={onClose}>
+    <div ref={dialogRef} tabIndex={-1} className="palette-backdrop" role="dialog" aria-modal="true" aria-label={`Edit ${session.name}`} onMouseDown={onClose}>
       <form className="session-editor" onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}>
         <div className="session-editor-heading">
           <div>
@@ -5664,6 +5670,7 @@ function SettingsModal({ settings, error, portableVaultStatus, onClose, onSave, 
 }
 
 function QuickConnectDialog({ error, onClose, onConnectSsh, onConnectTelnet, onConnectSerial, onConnectRemoteDesktop }: { error: string | null; onClose: () => void; onConnectSsh: (request: SshConnectRequest) => void; onConnectTelnet: (request: TelnetConnectRequest) => void; onConnectSerial: (request: SerialConnectRequest) => void; onConnectRemoteDesktop: (request: RemoteDesktopConnectRequest) => void }) {
+  const dialogRef = useDialogAutoFocus<HTMLDivElement>();
   const [uri, setUri] = useState("");
   const [uriError, setUriError] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -5854,7 +5861,7 @@ function QuickConnectDialog({ error, onClose, onConnectSsh, onConnectTelnet, onC
   };
 
   return (
-    <div className="palette-backdrop" role="dialog" aria-modal="true" aria-label="Quick connect" onMouseDown={onClose}>
+    <div ref={dialogRef} tabIndex={-1} className="palette-backdrop" role="dialog" aria-modal="true" aria-label="Quick connect" onMouseDown={onClose}>
       <form
         className="quick-connect"
         onMouseDown={(event) => event.stopPropagation()}
