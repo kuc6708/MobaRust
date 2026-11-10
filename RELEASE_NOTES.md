@@ -93,7 +93,8 @@ b1af997872709dd2ecb49436e6496793941f7d388b58a8df67de75250dc8405b  MobaRust-0.1.3
 ```
 
 They are preserved in the review package under `artifacts/linux-x64/` with
-`SHA256SUMS-linux-x64.txt`. They are **unsigned** and not published.
+`SHA256SUMS-linux-x64.txt`. They are **unsigned** and not published. Installation
+instructions are in [INSTALL.md](INSTALL.md).
 
 ## Known limitations
 
