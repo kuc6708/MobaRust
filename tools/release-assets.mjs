@@ -7,8 +7,11 @@ if (process.argv[2] === 'check-version') {
   const tag = process.env.GITHUB_REF_NAME;
   const frontend = JSON.parse(readFileSync('apps/desktop/package.json', 'utf8'));
   const cargo = readFileSync('Cargo.toml', 'utf8').match(/\[workspace.package\]\s+version = "([^"]+)"/)[1];
-  if (tag !== `v${config.version}` || frontend.version !== config.version || cargo !== config.version) {
-    throw new Error('Tag, Tauri, Cargo, and frontend versions must match');
+  const expected = `v${config.version}`;
+  const prerelease = typeof tag === 'string' && tag.startsWith(`${expected}-`) ? tag.slice(expected.length + 1) : null;
+  const validPrerelease = prerelease !== null && /^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$/.test(prerelease);
+  if ((tag !== expected && !validPrerelease) || frontend.version !== config.version || cargo !== config.version) {
+    throw new Error('Tag, Tauri, Cargo, and frontend versions must match (a prerelease suffix is allowed)');
   }
 } else if (process.argv[2] === 'collect') {
   const platform = process.argv[3];

@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const script = fileURLToPath(new URL('./release-assets.mjs', import.meta.url));
-function fixture(run) {
+function fixture(run, tag = 'v0.1.0') {
   const cwd = mkdtempSync(join(tmpdir(), 'mobarust-release-test-'));
   const put = (name, content) => {
     const destination = join(cwd, name);
@@ -16,7 +16,7 @@ function fixture(run) {
     writeFileSync(destination, content);
   };
   const invoke = (...args) => spawnSync(process.execPath, [script, ...args], {
-    cwd, encoding: 'utf8', env: { ...process.env, GITHUB_REF_NAME: 'v0.1.0' },
+    cwd, encoding: 'utf8', env: { ...process.env, GITHUB_REF_NAME: tag },
   });
   try {
     put('apps/desktop/src-tauri/tauri.conf.json', '{"productName":"MobaRust","version":"0.1.0"}');
@@ -33,6 +33,16 @@ test('release rejects inconsistent versions', () => fixture(({ put, invoke }) =>
   put('apps/desktop/package.json', '{"version":"0.2.0"}');
   assert.notEqual(invoke('check-version').status, 0);
 }));
+
+test('release accepts a prerelease tag for the configured version', () => fixture(({ invoke }) => {
+  assert.equal(invoke('check-version').status, 0);
+}, 'v0.1.0-rc.1'));
+
+test('release rejects malformed prerelease tags', () => {
+  for (const tag of ['v0.1.0-', 'v0.1.0-rc.1+bad', 'v0.1.1-rc.1']) {
+    fixture(({ invoke }) => assert.notEqual(invoke('check-version').status, 0), tag);
+  }
+});
 
 test('Linux release requires all three installers and hashes the delivered bytes', () => fixture(({ cwd, put, invoke }) => {
   put('apps/desktop/src-tauri/helpers/mobarust-vnc-helper', 'helper');
