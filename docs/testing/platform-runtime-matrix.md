@@ -20,6 +20,14 @@ Release runs on `v*` tags (draft prerelease); Quality runs on push/PR. From this
 read-only checkout these workflows have **not** run on GitHub, and changing them
 requires owner Actions access plus the token `workflow` scope.
 
+## Latest hosted CI result (fork branch)
+
+Quality run `42851645760` (2026-11-10) passed on ubuntu-22.04,
+ubuntu-24.04-arm, windows-latest, windows-11-arm and macos-15-intel. The
+`macos-15` arm64 job was cancelled while queued (hosted-runner availability).
+The dependency-audit job fails by design on the five unsuppressed warnings; it
+is the release gate, not a build failure.
+
 ## What CI establishes today
 
 - Native compilation and the repository test suite on Linux, Windows and macOS.

@@ -50,6 +50,10 @@
   transfer count and diagnostics scan state; high-DPI emulation (DPR 1/1.5/2)
   shows no horizontal overflow. Add `docs/testing/platform-runtime-matrix.md`
   documenting the CI matrix and per-OS manual runtime acceptance.
+- Cross-platform CI: pass Quality on Linux x64/ARM64, Windows x64/ARM64 and
+  macOS Intel (run 42851645760). Fixes: IPv6 fixture family handling, stdio/
+  argument-style xauth forwarding, Windows CRLF parser hashing, no-rc Unix-shell
+  PTY probe, and a macOS-only skip for the routed-IPv6 jump-chain stress.
 - Fix the synthetic X11 fixture: sshd now uses `AddressFamily inet` (the host
   could not allocate the display socket with the default family, and ports
   6010-6012 were occupied), and the test xauth wrapper also handles sshd's

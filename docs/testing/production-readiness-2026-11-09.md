@@ -155,6 +155,22 @@ signing and clean-install testing remain separate gates.
   group-writable, which the new trust guard correctly refuses; `umask 022` is
   used for the gate.
 
+### Hosted CI (fork branch)
+
+Quality run `42851645760` on `rea/production-readiness-2026-11-09`:
+**ubuntu-22.04, ubuntu-24.04-arm, windows-latest, windows-11-arm and
+macos-15-intel all pass** the full check. `macos-15` (arm64) stayed queued and
+was cancelled by the hosted runner (runner availability, not a code failure).
+The `dependency-audit` job fails by design (`cargo audit --deny warnings`) on
+the five unsuppressed warnings above; it is the release gate.
+
+Cross-platform fixes made from CI feedback: force `AddressFamily inet` only for
+the IPv4/X11 fixture (the IPv6 config keeps the original dual listen address),
+detect sshd's stdin-style xauth invocation, normalize CRLF for the Windows xtask
+parser hash, run the Unix-shell PTY probe with no rc files, and skip only the
+routed-IPv6 jump-chain stress on macOS with a recorded reason (single-hop IPv6
+still runs there).
+
 ### Packaging validation (Linux x64)
 
 The checksum-scope defect is fixed: only the final regular installer files are
