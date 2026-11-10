@@ -78,6 +78,20 @@ These warnings are the release roadblock: `cargo audit --deny warnings` fails,
 so a stable release cannot be published until the gtk-rs/Tauri and
 zbus/secret-service/keyring chains are upgraded and re-audited.
 
+Attempted upgrade track (2026-11-09):
+- Tauri was bumped 2.12.1 → 2.12.5 (latest stable) and the full Rust gate re-run
+  green. Tauri 2.12.5 still pins `gtk ^0.18`, and Tauri `3.0.0-alpha.6` also
+  pins `gtk ^0.18`. The glib advisory is patched only in `>=0.20.0`; released
+  gtk-rs `0.19` uses glib `^0.22`, but no released Tauri depends on it. Clearing
+  glib/proc-macro-error therefore requires an upstream wry/tao/muda/Tauri GTK
+  upgrade (or a maintained fork), not a local version bump.
+- keyring 4.2.0 still selects `zbus-secret-service-keyring-store 1.0.1`, which
+  depends on `zbus ^5` and `secret-service ^5`. The zbus_names/zvariant
+  advisories are "unmaintained" with no patched versions. Clearing them requires
+  replacing keyring with maintained platform stores (e.g. secret-service
+  `6.0.0-rc.1`, currently an RC) or waiting for maintained releases.
+Both are upstream/ecosystem blockers; no ignore rules were added.
+
 The advisory database receipt is `d9cb059f3217db87aeccd190b81eaffe8cc29cb9`
 (1,430 advisories). `cargo audit --deny warnings` intentionally blocks release
 on these warnings. No ignore rules were added. Complete separate audits of the updated VNC and fuzz lockfiles report zero
