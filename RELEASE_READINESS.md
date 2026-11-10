@@ -27,11 +27,11 @@ release has been created.
 | License check (Apache-2.0) | pass | local |
 | Release-asset tooling tests | 9/9 pass | local |
 | Linux x64 packages | DEB/RPM/AppImage built + checksums | local |
-| Hosted Quality (5 runnable platforms) | pass | CI 42854226245 |
+| Hosted Quality (5 runnable platforms) | pass | CI 42854226245; docs-only rerun 42879601476 also passes |
 | `dependency-audit` job | **fail by design** | CI |
 | macOS arm64 (`macos-15`) | cancelled while queued | CI runner |
 
-### Hosted CI (run `42854226245`, commit `32295e8`)
+### Hosted CI (run `42854226245`, commit `32295e8`; docs-only rerun `42879601476` on `4ae6b46` matches)
 
 | Job | Result |
 |---|---|
@@ -101,6 +101,7 @@ gh workflow run "Release installers" \
 - `/home/shood/MobaRust-review/patches/` (commit series)
 - `/home/shood/MobaRust-review/artifacts/linux-x64/` (packages + checksums)
 - `/home/shood/MobaRust-review/README.md`
+- Installation instructions: [INSTALL.md](INSTALL.md)
 
 ## Release checklist
 
