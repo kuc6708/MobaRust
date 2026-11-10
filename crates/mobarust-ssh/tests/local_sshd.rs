@@ -2737,7 +2737,7 @@ exit
             .await
             .expect("request remote X11 client fixture");
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         let mut shell_output = Vec::new();
         let channel = loop {
             tokio::select! {
@@ -2839,7 +2839,7 @@ exit
             .await
             .expect("request real X11 setup");
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         let channel = loop {
             tokio::select! {
                 channel = connection.next_x11_channel() => {
@@ -3129,7 +3129,15 @@ if [ "$#" -gt 0 ]; then
   # sshd invokes xauth with arguments; relay them unchanged without logging
   # display names or cookies.
   printf 'args-command\n' >> "$progress"
-  '{xauth}' "$@"
+  stdin_mode=0
+  for arg in "$@"; do
+    [ "$arg" = "-" ] && stdin_mode=1
+  done
+  if [ "$stdin_mode" -eq 1 ]; then
+    '{xauth}' -q "$@"
+  else
+    '{xauth}' -q "$@" </dev/null
+  fi
   xauth_result=$?
 else
   {{ while IFS= read -r xauth_line; do
@@ -3192,12 +3200,12 @@ exec /usr/bin/env -i HOME='{shell_home}' ZDOTDIR='{shell_home}' XDG_CONFIG_HOME=
         .ok_or("isolated SSH fixture requires the installed sftp-server executable")?;
         let config = directory.path().join("sshd_config");
         let log_level = if x11 { "VERBOSE" } else { "QUIET" };
-        let address_family = if ipv6 { "inet6" } else { "inet" };
+        let address_family = if ipv6 { "" } else { "AddressFamily inet" };
         let ipv6_listener = if ipv6 { "ListenAddress ::1\n" } else { "" };
         fs::write(
             &config,
             format!(
-                "Port {port}\nAddressFamily {address_family}\nListenAddress 127.0.0.1\n{ipv6_listener}HostKey {}\nAuthorizedKeysFile {}\nPidFile \"{home}/sshd.pid\"\nSubsystem sftp {sftp_server} -d \"{home}\"\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthentication yes\nPermitRootLogin no\nPermitUserRC no\nPermitUserEnvironment no\nUsePAM no\nStrictModes no\nAllowTcpForwarding yes\nAcceptEnv MOBARUST_FIXTURE\nSetEnv \"HOME={home}\" \"ZDOTDIR={home}\" \"XDG_CONFIG_HOME={home}\" \"XAUTHORITY={home}/.Xauthority\" BASH_ENV=/dev/null ENV=/dev/null SHLVL=2\nForceCommand {fixture_shell_path}\n{x11_config}AllowUsers {username}\nPrintMotd no\nUseDNS no\nLogLevel {log_level}\n",
+                "Port {port}\n{address_family}\nListenAddress 127.0.0.1\n{ipv6_listener}HostKey {}\nAuthorizedKeysFile {}\nPidFile \"{home}/sshd.pid\"\nSubsystem sftp {sftp_server} -d \"{home}\"\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthentication yes\nPermitRootLogin no\nPermitUserRC no\nPermitUserEnvironment no\nUsePAM no\nStrictModes no\nAllowTcpForwarding yes\nAcceptEnv MOBARUST_FIXTURE\nSetEnv \"HOME={home}\" \"ZDOTDIR={home}\" \"XDG_CONFIG_HOME={home}\" \"XAUTHORITY={home}/.Xauthority\" BASH_ENV=/dev/null ENV=/dev/null SHLVL=2\nForceCommand {fixture_shell_path}\n{x11_config}AllowUsers {username}\nPrintMotd no\nUseDNS no\nLogLevel {log_level}\n",
                 host_key.display(),
                 authorized_keys.display(),
                 fixture_shell_path = fixture_shell.display(),

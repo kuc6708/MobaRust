@@ -954,7 +954,7 @@ fn reviewed_parser_markers(markers: &str, parser: &str) -> bool {
             line.split_once('\0')
                 .is_some_and(|(path, _)| path == "vendor/russh/src/keys/format/mod.rs")
         })
-        && Sha256::digest(parser.as_bytes())
+        && Sha256::digest(parser.replace("\r\n", "\n").as_bytes())
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
@@ -2048,6 +2048,10 @@ mod tests {
         let parser = include_str!("../../vendor/russh/src/keys/format/mod.rs");
         let markers = "vendor/russh/src/keys/format/mod.rs\0 73:PEM delimiter";
         assert!(reviewed_parser_markers(markers, parser));
+        assert!(reviewed_parser_markers(
+            markers,
+            &parser.replace('\n', "\r\n")
+        ));
         assert!(!reviewed_parser_markers(markers, &format!("{parser}\n")));
         assert!(!reviewed_parser_markers(
             &format!("{markers}\nother.rs:1:key material"),
