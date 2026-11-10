@@ -40,7 +40,7 @@ Operations Deck layout are retained.
 | MobaXterm migration | Text SSH bookmarks added | No saved passwords, host trust, WSL shortcuts, macros, appearance or standalone tunnel import |
 | Session management | Folders, favorites, recents, search, editing, JSON backup/export; optional per-session font size (8–32), scrollback (100–100000) and cursor-blink preferences | Installed 0.1.12 cannot read populated preference fields; native GUI acceptance pending |
 | Vault | Native keyring and encrypted portable vault exist | Native keychain acceptance not exercised with personal secrets |
-| UI | Existing themes, command palette, statuses, native menus retained; local machine name/architecture now derived from the native snapshot; axe-core clean on the default view and five dialogs | Remaining dialogs (e.g. Macros), keyboard flow, high-DPI and screen-reader acceptance still need review |
+| UI | Existing themes, command palette, statuses, native menus retained; local machine name/architecture now derived from the native snapshot; axe-core clean on the default view and eight dialogs with focus trapped inside dialogs | Remaining dialogs (session editor, tunnel/WSL, remote editor), high-DPI and screen-reader acceptance still need review |
 | X11 | Synthetic setup forwarding tested separately | Real Xvfb requires a safe existing sticky Unix socket directory |
 | RDP/VNC | Existing helper boundaries and tests retained | RDP excluded from shipping; independent security/interoperability gates remain |
 
@@ -108,13 +108,16 @@ fixture-isolation and synthetic-X11 corrections; they are not counted as passes.
   the end-to-end `local_sshd` resume test passes (verified prefix append, corrupt/complete
   part rejection, symlink refusal, offset download).
 - Accessibility (headless Chrome + axe-core 4.10.2 over CDP): **0 violations**
-  for the default Operations Deck and the Settings, Help, Credential vault,
-  Snippets and Quick connect dialogs. Fixes: brighter `--faint` text (contrast),
-  InfoCard headings `h3`→`h2` (heading order), right rail `aside`→labelled
-  `section`, and dialog roles moved from `<form>` to its overlay. Static DOM
-  checks also showed 0 missing accessible names/`alt`, 0 unnamed dialogs and 0
-  duplicate ids. Macros/remaining dialogs, keyboard flow, high-DPI and
-  screen-reader acceptance still need review.
+  for the default Operations Deck and the Command palette, Macros, Broadcast,
+  Settings, Help, Credential vault, Snippets and Quick connect dialogs. Focus
+  now moves inside each dialog and Tab is trapped within it (new
+  `useDialogAutoFocus` hook). Fixes also included brighter `--faint` text
+  (contrast), a brighter macro-safety note, InfoCard headings `h3`→`h2`
+  (heading order), right rail `aside`→labelled `section`, and dialog roles moved
+  from `<form>` onto the overlay. Static DOM checks showed 0 missing accessible
+  names/`alt`, 0 unnamed dialogs and 0 duplicate ids. Remaining dialogs
+  (session editor, tunnel/WSL, remote editor), high-DPI and screen-reader
+  acceptance still need review.
 - `cargo xtask check-rust` (default umask 0002): formatting and all workspace
   suites passed (desktop 116, core 30 + 4, store 46 + 4, SSH authentication 16,
   forwarding 4) except the OpenSSH `local_sshd` fixture, which reported 4

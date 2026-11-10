@@ -4819,9 +4819,36 @@ function Metric({ label, value }: { label: string; value: string }) {
   return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
 }
 
+function useDialogAutoFocus<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!node.contains(document.activeElement)) {
+      const target = node.querySelector<HTMLElement>('[autofocus], input:not([type="hidden"]), select, textarea, button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])');
+      (target ?? node).focus();
+    }
+    const focusables = () => Array.from(node.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const items = focusables();
+      if (items.length === 0) { event.preventDefault(); node.focus(); return; }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    node.addEventListener("keydown", onKeyDown);
+    return () => { node.removeEventListener("keydown", onKeyDown); previous?.focus?.(); };
+  }, []);
+  return ref;
+}
+
 function HelpModal({ keyboard, onClose }: { keyboard: AppSettings["keyboard"]; onClose: () => void }) {
+  const dialogRef = useDialogAutoFocus<HTMLElement>();
   return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
-    <section className="help-modal" role="dialog" aria-modal="true" aria-label="MobaRust help" onMouseDown={(event) => event.stopPropagation()}>
+    <section ref={dialogRef} tabIndex={-1} className="help-modal" role="dialog" aria-modal="true" aria-label="MobaRust help" onMouseDown={(event) => event.stopPropagation()}>
       <div className="session-editor-heading">
         <div><span className="eyebrow">MOBA / HELP</span><h2>Operate safely</h2><p>Shortcuts, protocol boundaries, and the local-only testing posture.</p></div>
         <button type="button" className="icon-button" aria-label="Close help" onClick={onClose}><X size={17} /></button>
@@ -5010,6 +5037,7 @@ function SnippetsModal({ snippets, onClose, onSave, onDelete, onCopy }: { snippe
   const [draft, setDraft] = useState<SnippetRecord>(() => newSnippetRecord());
   const selected = snippets.find((snippet) => snippet.id === selectedId);
   const active = selected ?? draft;
+  const dialogRef = useDialogAutoFocus<HTMLElement>();
 
   const save = async (snippet: SnippetRecord) => {
     await onSave(snippet);
@@ -5024,7 +5052,7 @@ function SnippetsModal({ snippets, onClose, onSave, onDelete, onCopy }: { snippe
     setDraft(newSnippetRecord());
   };
 
-  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="snippets-modal" role="dialog" aria-modal="true" aria-label="Command snippets" onMouseDown={(event) => event.stopPropagation()}>
+  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section ref={dialogRef} tabIndex={-1} className="snippets-modal" role="dialog" aria-modal="true" aria-label="Command snippets" onMouseDown={(event) => event.stopPropagation()}>
     <div className="session-editor-heading"><div><span className="eyebrow">COMMAND LIBRARY</span><h2>Snippets</h2><p>Preview, edit, then copy for a deliberate manual paste. Nothing runs automatically.</p></div><button type="button" className="icon-button" aria-label="Close snippets" onClick={onClose}><X size={17} /></button></div>
     <div className="snippet-layout">
       <aside className="snippet-list" aria-label="Saved snippets"><div className="snippet-list-heading"><span>{snippets.length} saved</span><button type="button" className="outline-button" onClick={() => { setSelectedId(null); setDraft(newSnippetRecord()); }}><Plus size={13} /> New</button></div>{snippets.length === 0 ? <p className="snippet-empty">No snippets yet. Start with a safe, reviewable command.</p> : snippets.map((snippet) => <button type="button" key={snippet.id} className={`snippet-list-item ${snippet.id === selectedId ? "selected" : ""}`} onClick={() => setSelectedId(snippet.id)}><strong>{snippet.title || "Untitled snippet"}</strong><small>{snippet.tags.join(" · ") || "No tags"}</small></button>)}</aside>
@@ -5061,6 +5089,7 @@ function MacrosModal({ initialDraft, macros, terminals, savedSessions, onClose, 
   const [targetIds, setTargetIds] = useState<string[]>(() => terminals.filter((terminal) => terminal.status === "connected" && terminal.remoteProtocol !== "rdp" && terminal.remoteProtocol !== "vnc").map((terminal) => terminal.id));
   const selected = macros.find((record) => record.id === selectedId);
   const active = selected ?? draft;
+  const dialogRef = useDialogAutoFocus<HTMLElement>();
 
   const save = async (record: MacroRecord) => {
     await onSave(record);
@@ -5077,7 +5106,7 @@ function MacrosModal({ initialDraft, macros, terminals, savedSessions, onClose, 
 
   const readyTerminals = terminals.filter((terminal) => terminal.status === "connected" && terminal.remoteProtocol !== "rdp" && terminal.remoteProtocol !== "vnc");
 
-  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="macros-modal" role="dialog" aria-modal="true" aria-label="Terminal macros" onMouseDown={(event) => event.stopPropagation()}>
+  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section ref={dialogRef} tabIndex={-1} className="macros-modal" role="dialog" aria-modal="true" aria-label="Terminal macros" onMouseDown={(event) => event.stopPropagation()}>
     <div className="session-editor-heading"><div><span className="eyebrow">OPERATOR AUTOMATION</span><h2>Macros</h2><p>Run only after review and confirmation. Actions are bounded, visible, and cancellable.</p></div><button type="button" className="icon-button" aria-label="Close macros" onClick={onClose}><X size={17} /></button></div>
     <div className="macro-layout">
       <aside className="macro-list" aria-label="Saved macros"><div className="snippet-list-heading"><span>{macros.length} saved</span><button type="button" className="outline-button" onClick={() => { setSelectedId(null); setDraft(newMacroRecord()); }}><Plus size={13} /> New</button></div>{macros.length === 0 ? <p className="snippet-empty">No macros yet. Save a small, reviewable sequence.</p> : macros.map((record) => <button type="button" key={record.id} className={`snippet-list-item ${record.id === selectedId ? "selected" : ""}`} onClick={() => setSelectedId(record.id)}><strong>{record.title || "Untitled macro"}</strong><small>{record.actions.length} action{record.actions.length === 1 ? "" : "s"} · {record.tags.join(" · ") || "No tags"}</small></button>)}</aside>
@@ -5125,7 +5154,8 @@ function MacroActionRow({ index, action, savedSessions, terminals, onChange, onR
 
 function BroadcastModal({ terminals, selectedIds, enabled, onClose, onToggle, onEnable, onDisable }: { terminals: WorkspaceTerminal[]; selectedIds: string[]; enabled: boolean; onClose: () => void; onToggle: (id: string) => void; onEnable: () => void; onDisable: () => void }) {
   const ready = terminals.filter((terminal) => terminal.status === "connected" && terminal.remoteProtocol !== "rdp" && terminal.remoteProtocol !== "vnc");
-  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section className="broadcast-modal" role="dialog" aria-modal="true" aria-label="Broadcast input" onMouseDown={(event) => event.stopPropagation()}><div className="session-editor-heading"><div><span className="eyebrow">TERMINAL / BROADCAST</span><h2>Broadcast input</h2><p>Select exact targets before enabling. Every keystroke is sent to all selected terminals.</p></div><button type="button" className="icon-button" aria-label="Close broadcast settings" onClick={onClose}><X size={17} /></button></div><div className="broadcast-warning"><ShieldAlert size={17} /><div><strong>{enabled ? "Broadcast is active" : "Broadcast is off"}</strong><span>Use <kbd>Esc</kbd> at any time to disable it. Pasted multiline input still requires confirmation.</span></div></div><div className="broadcast-target-list"><div className="macro-targets-heading"><span>Target terminals</span><small>{selectedIds.length} selected · {ready.length} ready</small></div>{terminals.map((terminal) => { const isReady = terminal.status === "connected" && terminal.remoteProtocol !== "rdp" && terminal.remoteProtocol !== "vnc"; return <label className={`macro-target ${!isReady ? "disabled" : ""}`} key={terminal.id}><input type="checkbox" disabled={!isReady} checked={selectedIds.includes(terminal.id)} onChange={() => onToggle(terminal.id)} /><span>{terminal.label}</span><small>{isReady ? (terminal.remoteHost ?? "local") : terminal.remoteProtocol === "rdp" || terminal.remoteProtocol === "vnc" ? "remote desktop · text broadcast disabled" : terminal.status}</small></label>; })}</div><div className="session-editor-footer"><span className="remote-editor-safety"><ShieldCheck size={13} /> No input is sent while configuring</span><div><button type="button" className="outline-button" onClick={enabled ? onDisable : onClose}>{enabled ? "Disable" : "Cancel"}</button>{!enabled && <button type="button" className="primary-button" onClick={onEnable} disabled={selectedIds.length === 0}><Radio size={14} /> Enable broadcast</button>}</div></div></section></div>;
+  const dialogRef = useDialogAutoFocus<HTMLElement>();
+  return <div className="palette-backdrop" role="presentation" onMouseDown={onClose}><section ref={dialogRef} tabIndex={-1} className="broadcast-modal" role="dialog" aria-modal="true" aria-label="Broadcast input" onMouseDown={(event) => event.stopPropagation()}><div className="session-editor-heading"><div><span className="eyebrow">TERMINAL / BROADCAST</span><h2>Broadcast input</h2><p>Select exact targets before enabling. Every keystroke is sent to all selected terminals.</p></div><button type="button" className="icon-button" aria-label="Close broadcast settings" onClick={onClose}><X size={17} /></button></div><div className="broadcast-warning"><ShieldAlert size={17} /><div><strong>{enabled ? "Broadcast is active" : "Broadcast is off"}</strong><span>Use <kbd>Esc</kbd> at any time to disable it. Pasted multiline input still requires confirmation.</span></div></div><div className="broadcast-target-list"><div className="macro-targets-heading"><span>Target terminals</span><small>{selectedIds.length} selected · {ready.length} ready</small></div>{terminals.map((terminal) => { const isReady = terminal.status === "connected" && terminal.remoteProtocol !== "rdp" && terminal.remoteProtocol !== "vnc"; return <label className={`macro-target ${!isReady ? "disabled" : ""}`} key={terminal.id}><input type="checkbox" disabled={!isReady} checked={selectedIds.includes(terminal.id)} onChange={() => onToggle(terminal.id)} /><span>{terminal.label}</span><small>{isReady ? (terminal.remoteHost ?? "local") : terminal.remoteProtocol === "rdp" || terminal.remoteProtocol === "vnc" ? "remote desktop · text broadcast disabled" : terminal.status}</small></label>; })}</div><div className="session-editor-footer"><span className="remote-editor-safety"><ShieldCheck size={13} /> No input is sent while configuring</span><div><button type="button" className="outline-button" onClick={enabled ? onDisable : onClose}>{enabled ? "Disable" : "Cancel"}</button>{!enabled && <button type="button" className="primary-button" onClick={onEnable} disabled={selectedIds.length === 0}><Radio size={14} /> Enable broadcast</button>}</div></div></section></div>;
 }
 
 function SnippetForm({ snippet, isNew, onSave, onDelete, onCopy }: { snippet: SnippetRecord; isNew: boolean; onSave: (snippet: SnippetRecord) => Promise<void>; onDelete: () => Promise<void>; onCopy: (command: string) => Promise<void> }) {
@@ -5501,6 +5531,7 @@ function SessionEditor({ session, onClose, onSave }: { session: SavedSession; on
 }
 
 function SettingsModal({ settings, error, portableVaultStatus, onClose, onSave, onReset, onExport, onImport, onExportDiagnostics, onPortableCreate, onPortableUnlock, onPortableLock }: { settings: AppSettings; error: string | null; portableVaultStatus: PortableVaultStatus | null; onClose: () => void; onSave: (settings: AppSettings) => void; onReset: () => void; onExport: () => Promise<void>; onImport: () => Promise<void>; onExportDiagnostics: () => Promise<void>; onPortableCreate: (passphrase: string) => Promise<void>; onPortableUnlock: (passphrase: string) => Promise<void>; onPortableLock: () => Promise<void> }) {
+  const dialogRef = useDialogAutoFocus<HTMLDivElement>();
   const [theme, setTheme] = useState(settings.general.theme);
   const [confirmMultilinePaste, setConfirmMultilinePaste] = useState(settings.general.confirmMultilinePaste);
   const [fontSize, setFontSize] = useState(String(settings.appearance.fontSize));
@@ -5547,7 +5578,7 @@ function SettingsModal({ settings, error, portableVaultStatus, onClose, onSave, 
   };
 
   return (
-    <div className="palette-backdrop" role="dialog" aria-modal="true" aria-label="Settings" onMouseDown={close}>
+    <div ref={dialogRef} tabIndex={-1} className="palette-backdrop" role="dialog" aria-modal="true" aria-label="Settings" onMouseDown={close}>
       <form className="settings-modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}>
         <div className="session-editor-heading">
           <div>

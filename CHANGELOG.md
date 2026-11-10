@@ -30,10 +30,11 @@
   uploads still restart from the beginning. Covered by a real-SFTP fixture test
   that resumes a verified prefix and rejects corrupt, complete and symlinked parts.
 - Accessibility: axe-core over headless Chrome now reports **0 violations** for
-  the default Operations Deck and the Settings, Help, Credential vault, Snippets
-  and Quick connect dialogs. Raised muted-text contrast, fixed heading order,
-  replaced the nested `aside` with a labelled `section`, and moved dialog roles
-  off `<form>` elements.
+  the default Operations Deck and the Command palette, Macros, Broadcast,
+  Settings, Help, Credential vault, Snippets and Quick connect dialogs. Added a
+  reusable dialog focus/trap hook so focus moves inside and Tab stays contained;
+  raised muted-text and macro-note contrast; fixed heading order; replaced the
+  nested `aside` with a labelled `section`; moved dialog roles off `<form>`.
 - Report the local machine name and architecture from the native `app_snapshot`
   (`This Linux host`/`This PC`/`This Mac` plus x64/ARM64/Apple Silicon/Intel)
   instead of always claiming "This Mac / Apple Silicon". Covered by a frontend
