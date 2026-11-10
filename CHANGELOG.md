@@ -44,6 +44,12 @@
   and symlinked installer inputs are refused. Final deliverables are copied and
   checksummed in `target/debug/verified-installers`.
 
+- Fix the synthetic X11 fixture: sshd now uses `AddressFamily inet` (the host
+  could not allocate the display socket with the default family, and ports
+  6010-6012 were occupied), and the test xauth wrapper also handles sshd's
+  argument-style invocation. The full `cargo xtask check` gate is green under
+  `umask 022` (26 SSH fixture tests pass, 1 ignored).
+
 These changes are development work, not a stable release. Platform runtime,
 installer, signing and independent security acceptance remain separate gates.
 Existing released versions are documented in `docs/release/`.

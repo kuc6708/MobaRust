@@ -41,7 +41,7 @@ Operations Deck layout are retained.
 | Session management | Folders, favorites, recents, search, editing, JSON backup/export; optional per-session font size (8–32), scrollback (100–100000) and cursor-blink preferences | Installed 0.1.12 cannot read populated preference fields; native GUI acceptance pending |
 | Vault | Native keyring and encrypted portable vault exist | Native keychain acceptance not exercised with personal secrets |
 | UI | Existing themes, command palette, statuses, native menus retained; local machine name/architecture now derived from the native snapshot; axe-core clean on the default view and eight dialogs with focus trapped inside dialogs | Remaining dialogs (session editor, tunnel/WSL, remote editor), high-DPI and screen-reader acceptance still need review |
-| X11 | Synthetic setup forwarding tested separately | Real Xvfb requires a safe existing sticky Unix socket directory |
+| X11 | Synthetic setup forwarding fixture passes (sshd now uses `AddressFamily inet`) | Real Xvfb acceptance still requires a safe sticky Unix socket directory |
 | RDP/VNC | Existing helper boundaries and tests retained | RDP excluded from shipping; independent security/interoperability gates remain |
 
 ## Security and redistribution
@@ -86,9 +86,10 @@ credential sections. Host trust is append-only and never accepts changed keys.
 
 ## Validation receipt
 
-Pending the final validation run. See the final update below before using a
-development artifact. Earlier failed runs exposed and drove the PTY cleanup,
-fixture-isolation and synthetic-X11 corrections; they are not counted as passes.
+Final local validation completed on this Linux x64 host (see below). Earlier
+failed runs drove the PTY cleanup, fixture-isolation, synthetic-X11 and trust
+corrections; they are not counted as passes. Platform runtime acceptance,
+signing and clean-install testing remain separate gates.
 
 ### Development validation (current Linux x64 host)
 
@@ -118,15 +119,15 @@ fixture-isolation and synthetic-X11 corrections; they are not counted as passes.
   names/`alt`, 0 unnamed dialogs and 0 duplicate ids. Remaining dialogs
   (session editor, tunnel/WSL, remote editor), high-DPI and screen-reader
   acceptance still need review.
-- `cargo xtask check-rust` (default umask 0002): formatting and all workspace
-  suites passed (desktop 116, core 30 + 4, store 46 + 4, SSH authentication 16,
-  forwarding 4) except the OpenSSH `local_sshd` fixture, which reported 4
-  failures. Two were caused by this host's group-writable umask 0002 creating a
-  group-writable trust fixture (the new trust guard correctly refused it); two
-  are the host's OpenSSH 9.6 sshd rejecting the synthetic X11 channel request.
-  Re-running `local_sshd` under `umask 022` yields 23 passed, 2 failed (only the
-  X11 environment cases) and 1 ignored. These are environment-specific and are
-  not counted as passes; the trust and X11 guards are not weakened.
+- `cargo xtask check` and `cargo xtask check-rust` under `umask 022`: **exit 0**
+  (formatting, full workspace tests, Clippy, frontend install/test/check/lint/
+  build, release-asset tests, RDP/VNC helper checks, package layouts and fuzz).
+  The OpenSSH `local_sshd` fixture passes 26 tests (1 ignored) after adding
+  `AddressFamily inet` to the fixture sshd config: the host's default
+  address-family selection could not allocate the X11 display socket (ports
+  6010-6012 were occupied). The host default umask 0002 makes the trust fixture
+  group-writable, which the new trust guard correctly refuses; `umask 022` is
+  used for the gate.
 
 ### Packaging validation (Linux x64)
 
@@ -145,9 +146,9 @@ native-window behavior remains untested here.
 
 ### Not yet run on this host
 
-A fully green `cargo xtask check` (blocked by the host's synthetic-X11 fixture),
-comprehensive accessibility (dialogs, contrast, keyboard, screen reader),
-Windows/macOS runtime runners, clean-install testing, signing and notarization.
+Remaining accessibility review (session editor/tunnel/WSL/remote-editor dialogs,
+high-DPI, screen-reader), Windows/macOS runtime runners, clean-install testing,
+signing and notarization.
 
 ## Release gates
 

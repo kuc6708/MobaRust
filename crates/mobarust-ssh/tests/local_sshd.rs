@@ -2719,7 +2719,14 @@ fn forwards_an_explicit_x11_channel_to_a_loopback_display_fixture() {
         })
         .await
         .expect("connect local SSH X11 fixture");
-        let shell = connection.open_shell(100, 30).await.expect("open X11 shell");
+        let shell = match connection.open_shell(100, 30).await {
+            Ok(shell) => shell,
+            Err(error) => panic!(
+                "open X11 shell: {error}; xauth progress={}",
+                fs::read_to_string(fixture.directory.path().join("xauth-progress"))
+                    .unwrap_or_default()
+            ),
+        };
         let (mut reader, writer) = shell.split();
         writer
             .write(
@@ -2808,7 +2815,14 @@ fn forwards_x11_setup_to_a_disposable_xvfb_server_when_available() {
         })
         .await
         .expect("connect local SSH X11 fixture");
-        let shell = connection.open_shell(100, 30).await.expect("open X11 shell");
+        let shell = match connection.open_shell(100, 30).await {
+            Ok(shell) => shell,
+            Err(error) => panic!(
+                "open X11 shell: {error}; xauth progress={}",
+                fs::read_to_string(fixture.directory.path().join("xauth-progress"))
+                    .unwrap_or_default()
+            ),
+        };
         let (mut reader, writer) = shell.split();
         writer
             .write(
@@ -3111,16 +3125,24 @@ impl LocalSshd {
 umask 077
 progress='{progress}'
 printf 'started\n' >> "$progress"
-{{ while IFS= read -r xauth_line; do
-case "$xauth_line" in
-'remove unix:'*|'add unix:'*) printf 'unix-command\n' >> "$progress";;
-*) printf 'other-command\n' >> "$progress";;
-esac
-printf '%s\n' "$xauth_line"
-done
-printf 'input-ended\n' >> "$progress"
-}} | '{xauth}' -q -f '{authority}' -
-xauth_result=$?
+if [ "$#" -gt 0 ]; then
+  # sshd invokes xauth with arguments; relay them unchanged without logging
+  # display names or cookies.
+  printf 'args-command\n' >> "$progress"
+  '{xauth}' "$@"
+  xauth_result=$?
+else
+  {{ while IFS= read -r xauth_line; do
+  case "$xauth_line" in
+  'remove unix:'*|'add unix:'*) printf 'unix-command\n' >> "$progress";;
+  *) printf 'other-command\n' >> "$progress";;
+  esac
+  printf '%s\n' "$xauth_line"
+  done
+  printf 'input-ended\n' >> "$progress"
+  }} | '{xauth}' -q -f '{authority}' -
+  xauth_result=$?
+fi
 printf 'finished=%s\n' "$xauth_result" >> "$progress"
 exit "$xauth_result"
 "#,
@@ -3169,11 +3191,13 @@ exec /usr/bin/env -i HOME='{shell_home}' ZDOTDIR='{shell_home}' XDG_CONFIG_HOME=
         .find(|path| Path::new(path).is_file())
         .ok_or("isolated SSH fixture requires the installed sftp-server executable")?;
         let config = directory.path().join("sshd_config");
+        let log_level = if x11 { "VERBOSE" } else { "QUIET" };
+        let address_family = if ipv6 { "inet6" } else { "inet" };
         let ipv6_listener = if ipv6 { "ListenAddress ::1\n" } else { "" };
         fs::write(
             &config,
             format!(
-                "Port {port}\nListenAddress 127.0.0.1\n{ipv6_listener}HostKey {}\nAuthorizedKeysFile {}\nPidFile \"{home}/sshd.pid\"\nSubsystem sftp {sftp_server} -d \"{home}\"\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthentication yes\nPermitRootLogin no\nPermitUserRC no\nPermitUserEnvironment no\nUsePAM no\nStrictModes no\nAllowTcpForwarding yes\nAcceptEnv MOBARUST_FIXTURE\nSetEnv \"HOME={home}\" \"ZDOTDIR={home}\" \"XDG_CONFIG_HOME={home}\" \"XAUTHORITY={home}/.Xauthority\" BASH_ENV=/dev/null ENV=/dev/null SHLVL=2\nForceCommand {fixture_shell_path}\n{x11_config}AllowUsers {username}\nPrintMotd no\nUseDNS no\nLogLevel QUIET\n",
+                "Port {port}\nAddressFamily {address_family}\nListenAddress 127.0.0.1\n{ipv6_listener}HostKey {}\nAuthorizedKeysFile {}\nPidFile \"{home}/sshd.pid\"\nSubsystem sftp {sftp_server} -d \"{home}\"\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthentication yes\nPermitRootLogin no\nPermitUserRC no\nPermitUserEnvironment no\nUsePAM no\nStrictModes no\nAllowTcpForwarding yes\nAcceptEnv MOBARUST_FIXTURE\nSetEnv \"HOME={home}\" \"ZDOTDIR={home}\" \"XDG_CONFIG_HOME={home}\" \"XAUTHORITY={home}/.Xauthority\" BASH_ENV=/dev/null ENV=/dev/null SHLVL=2\nForceCommand {fixture_shell_path}\n{x11_config}AllowUsers {username}\nPrintMotd no\nUseDNS no\nLogLevel {log_level}\n",
                 host_key.display(),
                 authorized_keys.display(),
                 fixture_shell_path = fixture_shell.display(),
