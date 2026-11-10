@@ -65,10 +65,18 @@ Updates to crypto-bigint 0.7.11, ctutils 0.4.8, Tokio 1.54.1 and async-executor
 1.14.1 remove those findings. The complete final workspace audit reports zero
 vulnerabilities and no yanked packages, retaining these unsuppressed warnings:
 
-- glib 0.18.5: RUSTSEC-2024-0429, unsoundness; a GTK/Tauri dependency-chain
-  upgrade needs upstream compatibility work, not an unchecked override.
-- proc-macro-error 1.0.4, zbus_names 4.3.4, zvariant 5.15.0 and zvariant_derive
-  5.15.0: unmaintained dependency warnings.
+- glib 0.18.5: RUSTSEC-2024-0429, unsoundness; it and proc-macro-error 1.0.4
+  arrive through gtk-rs 0.18 (`atk`/`gtk`/`muda`/`tao`/Tauri). A GTK/Tauri
+  dependency-chain upgrade needs upstream compatibility work, not an unchecked
+  override.
+- zbus_names 4.3.5, zvariant 5.15.1 and zvariant_derive 5.15.1: unmaintained
+  warnings via zbus 5 (`rfd`/`ashpd` and keyring 4/secret-service 5). Patch
+  updates to the latest compatible versions do not clear the advisories; a
+  zbus/secret-service/keyring major upgrade is required.
+
+These warnings are the release roadblock: `cargo audit --deny warnings` fails,
+so a stable release cannot be published until the gtk-rs/Tauri and
+zbus/secret-service/keyring chains are upgraded and re-audited.
 
 The advisory database receipt is `d9cb059f3217db87aeccd190b81eaffe8cc29cb9`
 (1,430 advisories). `cargo audit --deny warnings` intentionally blocks release
