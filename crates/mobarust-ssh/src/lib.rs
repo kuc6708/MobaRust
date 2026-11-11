@@ -2541,7 +2541,7 @@ async fn authenticate_with_agent(
         )),
     };
     match openssh {
-        Ok(authentication) => return Ok(authentication),
+        Ok(authentication) => Ok(authentication),
         Err(openssh_error) => {
             let pageant = match AgentClient::connect_pageant().await {
                 Ok(agent) => authenticate_with_agent_client(handle, username, agent).await,
