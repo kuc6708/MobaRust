@@ -1,4 +1,13 @@
-# Installation — MobaRust 0.1.33 test build / 0.1.32-rc.1 (unsigned)
+# Installation — MobaRust 0.1.34 / 0.1.33 / 0.1.32 test builds (unsigned)
+
+## Windows x64 SSH authentication test build (0.1.34)
+
+`MobaRust-0.1.34-windows-x64.exe` — SHA-256
+`e246e5f264cf2a195288b8dfad97e38c5b47005c5eab4b0cc86c368844bbed91`
+(6,202,828 bytes). Unsigned; SmartScreen will warn. It may upgrade an installed
+build; back up first and prefer a disposable VM. For `cc00sw03`, edit the
+imported session to use the `shood-admin` identity and **SSH agent (Pageant or
+Windows OpenSSH)**, or import `%USERPROFILE%\.ssh\config`.
 
 ## Windows x64 SSH trust-fix test build (0.1.33)
 

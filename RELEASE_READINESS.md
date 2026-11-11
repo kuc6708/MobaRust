@@ -1,3 +1,26 @@
+# Release readiness — MobaRust 0.1.34-rc.1 test build
+
+## Latest: SSH authentication diagnostics (0.1.34-rc.1)
+
+- Commit `e27a282`; local tag `v0.1.34-rc.1` (not pushed); no release published.
+- Root cause: imported MobaXterm sessions default to interactive auth with the
+  MobaXterm username; the working OpenSSH profile uses `shood-admin` and the
+  Windows OpenSSH agent, which the Windows path did not support (Pageant only).
+- Fixes: Windows OpenSSH agent named-pipe fallback; specific missing/unreadable/
+  PPK key, agent-unavailable/no-identities, and unavailable-vault-credential
+  errors; `%USERPROFILE%` path expansion; attempted-method guidance and an
+  **Edit session…** action. Host-key verification remains strict.
+- Local: SSH library 51, store 47, desktop 119, authentication 16, local-sshd
+  26; fmt/clippy clean; frontend checks pass.
+- Quality CI `43039246358`: Windows x64 and ARM64 checks pass.
+- Release CI `43039266221`: Windows x64/ARM64 builds pass.
+- Windows x64 artifact (6,202,828 bytes):
+  SHA-256 `e246e5f264cf2a195288b8dfad97e38c5b47005c5eab4b0cc86c368844bbed91`.
+- The user must edit the imported session or import the OpenSSH config to use
+  the `shood-admin` identity; this is session data, not a trust bypass.
+
+---
+
 # Release readiness — MobaRust 0.1.33-rc.1 test build
 
 ## Latest: SSH trust-fix test build (0.1.33-rc.1)

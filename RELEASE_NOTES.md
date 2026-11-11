@@ -1,3 +1,69 @@
+# MobaRust 0.1.34-rc.1 — SSH authentication diagnostics test build
+
+**Verified, unpublished test build.** Commit `e27a282`; local tag
+`v0.1.34-rc.1` (not pushed); no GitHub release.
+
+## Root cause of the 0.1.33 Windows authentication failure
+
+MobaXterm import preserves the MobaXterm **username** and key path, but it does
+not copy MobaXterm authentication preferences, passwords, or agent settings. The
+imported `cc00sw03` session therefore defaulted to interactive
+keyboard-interactive prompts and the MobaXterm username. The Windows OpenSSH
+profile that works uses a different identity (`shood-admin`) and the Windows
+OpenSSH agent. MobaRust's Windows agent path previously tried **Pageant only**,
+so the Windows OpenSSH Authentication Agent's named pipe was never consulted.
+
+## Fixes
+
+- Windows SSH-agent authentication now tries Pageant and then the Windows
+  OpenSSH Authentication Agent named pipe
+  (`\\.\pipe\openssh-ssh-agent`).
+- Missing, unreadable, and PuTTY `.ppk` keys, an unavailable agent, an agent
+  with no identities, and a missing saved credential now produce distinct,
+  actionable errors. No key bytes, passwords, passphrases, or agent material is
+  logged or displayed.
+- Private-key paths expand `%VARS%` such as `%USERPROFILE%` in addition to `~`.
+- Auth failures show the attempted method, guidance to verify the username and
+  credentials, and an **Edit session…** action for saved sessions.
+- Session editor and Quick Connect label the Windows OpenSSH agent and document
+  key-path expansion and `.ppk` conversion.
+- MobaXterm import states clearly that authentication preferences are not
+  imported and that sessions default to interactive prompts. Usernames and key
+  paths remain preserved.
+- Strict host-key verification is unchanged.
+
+## Verified Windows x64 test installer
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `MobaRust-0.1.34-windows-x64.exe` | 6,202,828 | `e246e5f264cf2a195288b8dfad97e38c5b47005c5eab4b0cc86c368844bbed91` |
+
+Preserved at `/home/shood/MobaRust-review/artifacts/release-0.1.34-rc.1/`.
+Unsigned; do not overwrite an existing installation without authorization.
+
+## Verification
+
+- Local: SSH library 51, store 47, desktop 119, authentication 16, local-sshd
+  26; fmt/clippy clean; frontend check/lint/unit/build pass.
+- Quality CI `43039246358`: Windows x64 and Windows ARM64 compile checks pass
+  (full run continues for the other platforms).
+- Release CI `43039266221`: Windows x64 and Windows ARM64 builds pass.
+
+## Fixing the saved session
+
+Either:
+
+1. Edit `cc00sw03 (Prod)` and use the same identity as OpenSSH: username
+   `shood-admin`, method **SSH agent (Pageant or Windows OpenSSH)**; or select
+   the private-key path (for example `%USERPROFILE%\.ssh\id_ed25519`), converting
+   `.ppk` first; **or**
+2. Import `%USERPROFILE%\.ssh\config` (the OpenSSH upload action) and use the
+   `shood-admin` profile it creates.
+
+The new error banner identifies the attempted method and offers **Edit session…**.
+
+---
+
 # MobaRust 0.1.33-rc.1 — SSH trust-fix test build
 
 **Verified, unpublished test build.** Commit `4a0b2b0`; local tag
