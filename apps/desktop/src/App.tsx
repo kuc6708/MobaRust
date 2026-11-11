@@ -1,5 +1,6 @@
 import { parseTerminalPreferences, resolveTerminalPreferences, type TerminalPreferences } from "./terminal-preferences";
 import { reviewUnknownHostTrust, isUnknownHostKeyError, isChangedHostKeyError } from "./host-trust";
+import { authMethodLabel, isAuthenticationError } from "./ssh-errors";
 import { localShellDisplayName } from "./shell-label";
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
@@ -1509,6 +1510,8 @@ function App() {
   const zoomPersistTimerRef = useRef<number | null>(null);
   const [portableVaultStatus, setPortableVaultStatus] = useState<PortableVaultStatus | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [failedAuthSessionId, setFailedAuthSessionId] = useState<string | null>(null);
+  const [failedAuthMethod, setFailedAuthMethod] = useState<string | null>(null);
   const [pendingHostTrust, setPendingHostTrust] = useState<SshConnectRequest | null>(null);
   const [hostTrustBusy, setHostTrustBusy] = useState(false);
   const [sessionListError, setSessionListError] = useState<string | null>(null);
@@ -2456,10 +2459,12 @@ function App() {
     }
   }, []);
 
-  const connectSsh = useCallback(async (request: SshConnectRequest, offerSave = true, terminalPreferences?: TerminalPreferences | null) => {
+  const connectSsh = useCallback(async (request: SshConnectRequest, offerSave = true, terminalPreferences?: TerminalPreferences | null, sessionId?: string) => {
     setConnectionError(null);
     setPendingHostTrust(null);
     setSessionNotice(null);
+    setFailedAuthSessionId(null);
+    setFailedAuthMethod(null);
     if (!IS_TAURI) {
       setConnectionError("SSH connections require the desktop runtime.");
       return;
@@ -2513,6 +2518,10 @@ function App() {
       recordAudit("connectionFailed", "SSH");
       setConnectionError(message);
       setPendingHostTrust(isUnknownHostKeyError(message) ? request : null);
+      if (isAuthenticationError(message)) {
+        setFailedAuthSessionId(sessionId ?? null);
+        setFailedAuthMethod(authMethodLabel(request.auth.method));
+      }
     }
   }, [recordAudit, refreshSavedSessions, requestTerminalFocus]);
 
@@ -2864,7 +2873,7 @@ function App() {
       setConnectionError("This SSH profile has incomplete authentication or an unresolved, cyclic, or oversized jump chain (maximum 8 hosts).");
       return;
     }
-    return connectSsh(request, false, session.terminal_preferences);
+    return connectSsh(request, false, session.terminal_preferences, session.id);
   }, [connectRemoteDesktop, connectSerial, connectSsh, connectTelnet, openSavedLocalSession, recordAudit, savedSessions, touchSavedSession]);
 
   const writeToExplicitTargets = useCallback(async (targets: MacroTargetBinding[], data: string) => {
@@ -4205,7 +4214,7 @@ function App() {
               <button className="primary-button" onClick={() => startNewTerminal()}><Plus size={15} /> New terminal</button>
             </div>
           </div>
-          {connectionError && !quickConnectOpen && activeView !== "files" && <div className="connect-error workspace-error" role="alert"><span>{connectionError}</span>{isChangedHostKeyError(connectionError) && <span>Changed host keys cannot be trusted here; verify with the administrator.</span>}{pendingHostTrust && <button type="button" className="outline-button" onClick={() => void trustPendingHostKey()} disabled={hostTrustBusy}>{hostTrustBusy ? "Reviewing…" : "Review & trust host key…"}</button>}<button type="button" className="outline-button" aria-label="Dismiss error" onClick={() => setConnectionError(null)}>Dismiss</button></div>}
+          {connectionError && !quickConnectOpen && activeView !== "files" && <div className="connect-error workspace-error" role="alert"><span>{connectionError}</span>{isAuthenticationError(connectionError) && <span>MobaRust used {failedAuthMethod ?? "authentication"}. Verify the username and credentials. If your OpenSSH profile uses a different user, key, or agent, edit this session or import your OpenSSH config.</span>}{isChangedHostKeyError(connectionError) && <span>Changed host keys cannot be trusted here; verify with the administrator.</span>}{failedAuthSessionId && <button type="button" className="outline-button" onClick={() => { const saved = savedSessions.find((item) => item.id === failedAuthSessionId); if (saved) { setConnectionError(null); setFailedAuthSessionId(null); setEditingSession(saved); } }}>Edit session…</button>}{pendingHostTrust && <button type="button" className="outline-button" onClick={() => void trustPendingHostKey()} disabled={hostTrustBusy}>{hostTrustBusy ? "Reviewing…" : "Review & trust host key…"}</button>}<button type="button" className="outline-button" aria-label="Dismiss error" onClick={() => setConnectionError(null)}>Dismiss</button></div>}
           {sessionNotice && <div className={`workspace-notice${typeof sessionNotice === "string" ? "" : " workspace-notice-review"}`} role="status">
             {typeof sessionNotice === "string" ? <CheckCircle2 size={14} /> : <CircleHelp size={14} />}
             <div><span>{typeof sessionNotice === "string" ? sessionNotice : sessionNotice.message}</span>
@@ -5539,7 +5548,7 @@ function SessionEditor({ session, onClose, onSave }: { session: SavedSession; on
             <label className="quick-connect-wide">
               Method
               <select value={authKind} onChange={(event) => { setAuthKind(event.target.value as typeof authKind); setAuthError(null); }}>
-                <option value="agent">Local SSH agent</option>
+                <option value="agent">SSH agent (Pageant or Windows OpenSSH)</option>
                 <option value="privateKey">Private key path</option>
                 <option value="password">Vault password reference</option>
                 <option value="keyboardInteractive">Keyboard-interactive vault response</option>
@@ -5548,8 +5557,8 @@ function SessionEditor({ session, onClose, onSave }: { session: SavedSession; on
             </label>
             {authKind === "privateKey" && <label className="quick-connect-wide">
               Private key path or reference
-              <input value={keyRef} onChange={(event) => setKeyRef(event.target.value)} placeholder="path or approved key reference" />
-              <small>Only this non-secret path crosses IPC. The key file is never opened by the editor.</small>
+              <input value={keyRef} onChange={(event) => setKeyRef(event.target.value)} placeholder="~/.ssh/id_ed25519" />
+              <small>Only this non-secret path crosses IPC. Supports ~ and %USERPROFILE%; PuTTY .ppk keys must be converted to OpenSSH format.</small>
             </label>}
             {(authKind === "password" || authKind === "keyboardInteractive" || authKind === "privateKey") && <label className="quick-connect-wide">
               {authKind === "privateKey" ? "Passphrase credential reference" : authKind === "keyboardInteractive" ? "Response credential reference" : "Credential reference"}
@@ -6027,7 +6036,7 @@ function QuickConnectDialog({ error, onClose, onConnectSsh, onConnectTelnet, onC
                   <label className="quick-connect-wide">
                     Authentication
                     <select value={method} onChange={(event) => setMethod(event.target.value as "agent" | "privateKey" | "password" | "keyboardInteractive" | "keyboardInteractivePrompt")}>
-                      <option value="agent">Local SSH agent</option>
+                      <option value="agent">SSH agent (Pageant or Windows OpenSSH)</option>
                       <option value="privateKey">Private key path</option>
                       <option value="password">Existing vault credential reference</option>
                       <option value="keyboardInteractive">Keyboard-interactive · vault response</option>
@@ -6039,7 +6048,7 @@ function QuickConnectDialog({ error, onClose, onConnectSsh, onConnectTelnet, onC
                       <label className="quick-connect-wide">
                         Private key path
                         <input required value={keyPath} onChange={(event) => setKeyPath(event.target.value)} placeholder="~/.ssh/id_ed25519" />
-                        <small>The key stays on disk; only its path crosses IPC.</small>
+                        <small>The key stays on disk; only its path crosses IPC. Supports ~ and %USERPROFILE%; convert .ppk keys to OpenSSH format.</small>
                       </label>
                       <label className="quick-connect-wide">
                         Passphrase credential reference <span className="optional">optional</span>
@@ -6056,7 +6065,7 @@ function QuickConnectDialog({ error, onClose, onConnectSsh, onConnectTelnet, onC
                   ) : (
                     <div className="quick-connect-wide quick-connect-hint">
                       <ShieldCheck size={14} />
-                      <span>{method === "keyboardInteractivePrompt" ? "After host-key verification, enter each password or OTP separately. Responses are not saved. Login expires after two minutes; Cancel stops authentication." : "The native SSH agent signs authentication; private key material stays with the agent."}</span>
+                      <span>{method === "keyboardInteractivePrompt" ? "After host-key verification, enter each password or OTP separately. Responses are not saved. Login expires after two minutes; Cancel stops authentication." : "Uses Pageant or the Windows OpenSSH Authentication Agent; private key material stays with the agent."}</span>
                     </div>
                   )}
                   <label className="quick-connect-wide">

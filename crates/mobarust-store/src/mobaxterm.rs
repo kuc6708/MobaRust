@@ -71,7 +71,7 @@ pub(super) fn parse(contents: &str) -> (Vec<SessionRecord>, Vec<String>, Vec<Str
         session.folder = Some(folder.clone());
         session.tags = vec!["imported".into(), "mobaxterm".into()];
         session.favorite = false;
-        session.notes = Some("Imported text bookmarks. Verify usernames, key paths, host trust and bastion authentication before connecting. Passwords, macros, terminal settings and forwarding rules are not imported.".into());
+        session.notes = Some("Imported text bookmarks. Verify usernames, key paths, host trust and bastion authentication before connecting. Authentication defaults to an interactive prompt; select SSH agent or a private key if your OpenSSH profile uses one. Passwords, macros, terminal settings and forwarding rules are not imported.".into());
         if !f[15].is_empty() {
             // A reference only: do not expand Windows paths or read private keys.
             session.auth = AuthMethod::PrivateKey {
@@ -127,7 +127,7 @@ pub(super) fn parse(contents: &str) -> (Vec<SessionRecord>, Vec<String>, Vec<Str
         }
         sessions.push(session);
     }
-    warnings.push("Only SSH bookmarks are supported. Credentials, host trust, macros, WSL shortcuts, appearance and standalone tunnels are not imported.".into());
+    warnings.push("Only SSH bookmarks are supported. Authentication preferences, credentials, host trust, macros, WSL shortcuts, appearance and standalone tunnels are not imported; review each session's auth method.".into());
     (sessions, skipped, warnings)
 }
 
@@ -154,6 +154,32 @@ mod tests {
         assert!(!json.contains("NEVER_EXPORT"));
         assert!(!json.contains("evil-command"));
     }
+    #[test]
+    fn preserves_username_and_key_path_and_flags_default_interactive_auth() {
+        let text = "[Bookmarks]\nplain=#109#0%host.test%22%alice%%-1%-1%%%%%0%-1%0%%%#\nkeyed=#109#0%host.test%22%alice%%-1%-1%%%%%0%-1%0%%key.ppk%#\n";
+        let (sessions, skipped, warnings) = parse(text);
+        assert!(skipped.is_empty());
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].username.as_deref(), Some("alice"));
+        assert!(matches!(
+            sessions[0].auth,
+            AuthMethod::KeyboardInteractivePrompt
+        ));
+        assert_eq!(sessions[1].username.as_deref(), Some("alice"));
+        assert!(matches!(
+            &sessions[1].auth,
+            AuthMethod::PrivateKey {
+                key_ref,
+                credential_ref: None
+            } if key_ref == "key.ppk"
+        ));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("Authentication"))
+        );
+    }
+
     #[test]
     fn malformed_and_unsupported_records_are_reported() {
         let (sessions, skipped, _) = parse(

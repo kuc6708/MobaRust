@@ -8,7 +8,7 @@ use mobarust_ssh::{
     SshError, SshOutput, X11ForwardingOptions, negotiate_socks5, send_socks5_reply,
     validate_forward_host,
 };
-use mobarust_vault::{CredentialId, CredentialLookup, VaultError};
+use mobarust_vault::{CredentialId, CredentialLookup, SecretMaterial, VaultError};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -1865,8 +1865,7 @@ fn credentials_from_auth(
         }
         SshAuthRequest::Agent => Ok(SshCredentials::agent(username)),
         SshAuthRequest::Password { credential_id } => {
-            let id = CredentialId::new(credential_id.clone())?;
-            let secret = vault.get(&id)?;
+            let secret = vault_secret(vault, credential_id, "password")?;
             Ok(SshCredentials::password_secret(
                 username,
                 SshSecret::from_zeroizing(secret.into_zeroizing()),
@@ -1879,8 +1878,7 @@ fn credentials_from_auth(
             let passphrase = passphrase_credential_id
                 .as_ref()
                 .map(|credential_id| {
-                    CredentialId::new(credential_id.clone())
-                        .and_then(|id| vault.get(&id))
+                    vault_secret(vault, credential_id, "private-key passphrase")
                         .map(|secret| SshSecret::from_zeroizing(secret.into_zeroizing()))
                 })
                 .transpose()?;
@@ -1891,14 +1889,26 @@ fn credentials_from_auth(
             ))
         }
         SshAuthRequest::KeyboardInteractive { credential_id } => {
-            let id = CredentialId::new(credential_id.clone())?;
-            let secret = vault.get(&id)?;
+            let secret = vault_secret(vault, credential_id, "keyboard-interactive")?;
             Ok(SshCredentials::keyboard_interactive_secret(
                 username,
                 SshSecret::from_zeroizing(secret.into_zeroizing()),
             ))
         }
     }
+}
+
+fn vault_secret(
+    vault: &dyn CredentialLookup,
+    credential_id: &str,
+    purpose: &str,
+) -> Result<SecretMaterial, SshManagerError> {
+    let id = CredentialId::new(credential_id.to_owned())?;
+    vault.get(&id).map_err(|_| {
+        SshManagerError::InvalidRequest(format!(
+            "Saved {purpose} credential is unavailable; store it in the vault or choose another authentication method"
+        ))
+    })
 }
 
 fn host_key_policy(request: &SshConnectRequest) -> Result<HostKeyPolicy, SshManagerError> {
@@ -1931,15 +1941,40 @@ fn host_key_policy_for(
 }
 
 fn expand_user_path(path: &str) -> PathBuf {
-    if path == "~" {
-        return std::env::home_dir().unwrap_or_else(|| PathBuf::from(path));
+    let expanded = expand_percent_variables(path, |name| std::env::var(name).ok());
+    let expanded = expanded.as_str();
+    if expanded == "~" {
+        return std::env::home_dir().unwrap_or_else(|| PathBuf::from(expanded));
     }
-    if let Some(relative) = path.strip_prefix("~/")
+    if let Some(relative) = expanded.strip_prefix("~/")
         && let Some(home) = std::env::home_dir()
     {
         return home.join(relative);
     }
-    PathBuf::from(path)
+    PathBuf::from(expanded)
+}
+
+fn expand_percent_variables(input: &str, lookup: impl Fn(&str) -> Option<String>) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(start) = rest.find('%') {
+        output.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        if let Some(end) = after.find('%') {
+            let name = &after[..end];
+            if !name.is_empty()
+                && let Some(value) = lookup(name)
+            {
+                output.push_str(&value);
+                rest = &after[end + 1..];
+                continue;
+            }
+        }
+        output.push('%');
+        rest = after;
+    }
+    output.push_str(rest);
+    output
 }
 
 enum ReconnectOutcome<T> {
@@ -4369,9 +4404,9 @@ mod tests {
         MAX_SERVER_ALIVE_INTERVAL_SECONDS, MAX_SSH_JUMP_HOSTS, ReconnectOutcome, SshConnectRequest,
         SshManager, SshManagerError, SshTransferRequest, TRANSFER_PROGRESS_MIN_INTERVAL,
         TransferProtocol, add_transfer_size, collect_local_files, commit_local_file,
-        host_key_policy_for, local_part_path, local_resume_part_path, next_shell_reconnect_count,
-        reconnect_with_backoff, remote_child_path, remove_partial_download,
-        remove_partial_download_path, server_alive_interval_duration,
+        expand_percent_variables, host_key_policy_for, local_part_path, local_resume_part_path,
+        next_shell_reconnect_count, reconnect_with_backoff, remote_child_path,
+        remove_partial_download, remove_partial_download_path, server_alive_interval_duration,
         should_emit_transfer_progress, transfer_metrics, validate_local_file_path,
         validate_remote_directory_path, validate_remote_file_path, validate_remote_mutation_path,
         validate_ssh_connection_policy, validate_transfer_component, validate_tunnel_host,
@@ -6307,5 +6342,18 @@ mod tests {
             .expect("reconnect cancellation should be prompt")
             .expect("reconnect task should not panic");
         assert!(matches!(result, ReconnectOutcome::Cancelled));
+    }
+
+    #[test]
+    fn expands_percent_environment_variables_without_secrets() {
+        let expanded = expand_percent_variables(r"%USERPROFILE%\.ssh\id_ed25519", |name| {
+            (name == "USERPROFILE").then(|| "C:\\Users\\shood".into())
+        });
+        assert_eq!(expanded, r"C:\Users\shood\.ssh\id_ed25519");
+        assert_eq!(
+            expand_percent_variables("%UNKNOWN%/x", |_| None),
+            "%UNKNOWN%/x"
+        );
+        assert_eq!(expand_percent_variables("100%", |_| None), "100%");
     }
 }

@@ -110,10 +110,14 @@ pub enum SshError {
         algorithm: String,
         fingerprint: String,
     },
-    #[error("SSH authentication was rejected")]
+    #[error("SSH authentication was rejected; verify the username, key/agent, or password")]
     AuthenticationRejected,
     #[error("SSH agent authentication failed")]
     Agent(String),
+    #[error("No SSH agent is available: {0}")]
+    AgentUnavailable(String),
+    #[error("SSH agent is running but has no identities; add a key with ssh-add")]
+    AgentNoIdentities,
     #[error("SSH keyboard-interactive authentication requires non-echo prompts")]
     KeyboardInteractiveEchoPrompt,
     #[error("SSH keyboard-interactive authentication requested too many prompts")]
@@ -150,6 +154,14 @@ pub enum SshError {
     ConnectionFailed,
     #[error("SSH private key could not be loaded")]
     PrivateKey(#[source] russh::keys::Error),
+    #[error("SSH private key file was not found: {}", .0.display())]
+    PrivateKeyMissing(std::path::PathBuf),
+    #[error("SSH private key file could not be read: {}", .0.display())]
+    PrivateKeyUnreadable(std::path::PathBuf),
+    #[error(
+        "PuTTY .ppk private keys are not supported; convert the key to OpenSSH format (ssh-keygen -i)"
+    )]
+    PrivateKeyPpk,
     #[error("SSH private key algorithm is unsupported: {0}")]
     UnsupportedKeyAlgorithm(String),
     #[error("SSH private key exceeds the 4 MiB safety limit")]
@@ -2299,13 +2311,21 @@ fn load_private_key(
     path: &std::path::Path,
     passphrase: Option<&str>,
 ) -> Result<russh::keys::PrivateKey, SshError> {
-    let file = std::fs::File::open(path)
-        .map_err(|error| SshError::PrivateKey(russh::keys::Error::IO(error)))?;
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(SshError::PrivateKeyMissing(path.to_path_buf()));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Err(SshError::PrivateKeyUnreadable(path.to_path_buf()));
+        }
+        Err(error) => return Err(SshError::PrivateKey(russh::keys::Error::IO(error))),
+    };
     let metadata = file
         .metadata()
         .map_err(|error| SshError::PrivateKey(russh::keys::Error::IO(error)))?;
     if !metadata.is_file() {
-        return Err(SshError::PrivateKey(russh::keys::Error::CouldNotReadKey));
+        return Err(SshError::PrivateKeyUnreadable(path.to_path_buf()));
     }
     if metadata.len() > MAX_PRIVATE_KEY_FILE_BYTES as u64 {
         return Err(SshError::PrivateKeyTooLarge);
@@ -2321,6 +2341,14 @@ fn load_private_key(
 
     let key_text = std::str::from_utf8(&key_bytes)
         .map_err(|_| SshError::PrivateKey(russh::keys::Error::CouldNotReadKey))?;
+    if key_text.contains("PuTTY-User-Key-File")
+        || path
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("ppk"))
+    {
+        return Err(SshError::PrivateKeyPpk);
+    }
     russh::keys::decode_secret_key(key_text, passphrase).map_err(map_private_key_error)
 }
 
@@ -2447,20 +2475,23 @@ fn keyboard_interactive_responses(
         .collect())
 }
 
-#[cfg(unix)]
-async fn authenticate_with_agent(
+async fn authenticate_with_agent_client<A>(
     handle: &mut client::Handle<ClientHandler>,
     username: String,
-) -> Result<client::AuthResult, SshError> {
-    use russh::keys::agent::{AgentIdentity, client::AgentClient};
+    mut agent: russh::keys::agent::client::AgentClient<A>,
+) -> Result<client::AuthResult, SshError>
+where
+    A: russh::keys::agent::client::AgentStream + Send + Unpin,
+{
+    use russh::keys::agent::AgentIdentity;
 
-    let mut agent = AgentClient::connect_env()
-        .await
-        .map_err(|error| SshError::Agent(error.to_string()))?;
     let identities = agent
         .request_identities()
         .await
         .map_err(|error| SshError::Agent(error.to_string()))?;
+    if identities.is_empty() {
+        return Err(SshError::AgentNoIdentities);
+    }
 
     for identity in identities {
         let authentication = match identity {
@@ -2481,38 +2512,37 @@ async fn authenticate_with_agent(
     Err(SshError::AuthenticationRejected)
 }
 
+#[cfg(unix)]
+async fn authenticate_with_agent(
+    handle: &mut client::Handle<ClientHandler>,
+    username: String,
+) -> Result<client::AuthResult, SshError> {
+    use russh::keys::agent::client::AgentClient;
+
+    let agent = AgentClient::connect_env().await.map_err(|_| {
+        SshError::AgentUnavailable("SSH_AUTH_SOCK is not set or the agent is unreachable".into())
+    })?;
+    authenticate_with_agent_client(handle, username, agent).await
+}
+
 #[cfg(windows)]
 async fn authenticate_with_agent(
     handle: &mut client::Handle<ClientHandler>,
     username: String,
 ) -> Result<client::AuthResult, SshError> {
-    use russh::keys::agent::{AgentIdentity, client::AgentClient};
+    use russh::keys::agent::client::AgentClient;
 
-    let mut agent = AgentClient::connect_pageant()
-        .await
-        .map_err(|error| SshError::Agent(error.to_string()))?;
-    let identities = agent
-        .request_identities()
-        .await
-        .map_err(|error| SshError::Agent(error.to_string()))?;
-
-    for identity in identities {
-        let authentication = match identity {
-            AgentIdentity::PublicKey { key, .. } => handle
-                .authenticate_publickey_with(username.clone(), key, None, &mut agent)
-                .await
-                .map_err(|error| SshError::Agent(error.to_string()))?,
-            AgentIdentity::Certificate { certificate, .. } => handle
-                .authenticate_certificate_with(username.clone(), certificate, None, &mut agent)
-                .await
-                .map_err(|error| SshError::Agent(error.to_string()))?,
-        };
-        if authentication.success() {
-            return Ok(authentication);
+    match AgentClient::connect_pageant().await {
+        Ok(agent) => authenticate_with_agent_client(handle, username, agent).await,
+        Err(pageant_error) => {
+            match AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
+                Ok(agent) => authenticate_with_agent_client(handle, username, agent).await,
+                Err(pipe_error) => Err(SshError::AgentUnavailable(format!(
+                    "Pageant is unavailable ({pageant_error}); Windows OpenSSH agent is unavailable ({pipe_error}). Start the OpenSSH Authentication Agent service or Pageant, or choose a private key."
+                ))),
+            }
         }
     }
-
-    Err(SshError::AuthenticationRejected)
 }
 
 pub struct SshShell {
@@ -4434,6 +4464,30 @@ mod tests {
         assert!(matches!(error, SshError::PrivateKey(_)));
         assert_eq!(error.to_string(), "SSH private key could not be loaded");
         std::fs::remove_file(path).expect("remove disposable key fixture");
+    }
+
+    #[test]
+    fn private_key_loader_reports_missing_and_ppk_distinctly() {
+        let missing = std::env::temp_dir().join(format!(
+            "mobarust-ssh-missing-key-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let error = load_private_key(&missing, None).expect_err("missing key must be rejected");
+        assert!(matches!(&error, SshError::PrivateKeyMissing(path) if path == &missing));
+        assert!(error.to_string().contains("was not found"));
+
+        let ppk = std::env::temp_dir().join(format!(
+            "mobarust-ssh-ppk-key-{}-{}.ppk",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&ppk, b"PuTTY-User-Key-File-2: ssh-rsa\n")
+            .expect("write disposable ppk fixture");
+        let error = load_private_key(&ppk, None).expect_err("ppk key must be rejected");
+        assert!(matches!(error, SshError::PrivateKeyPpk));
+        assert!(error.to_string().contains("convert"));
+        std::fs::remove_file(ppk).expect("remove disposable ppk fixture");
     }
 
     #[test]

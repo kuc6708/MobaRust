@@ -803,11 +803,13 @@ fn dedicated_agent_rejects_empty_and_wrong_keys_then_authenticates() {
             };
             let wrong_key = fixture.directory.path().join("agent-wrong-key");
             run_keygen(&wrong_key).expect("generate unauthorized agent key");
-            for key in [&wrong_key, &fixture.client_key] {
-                assert!(matches!(
-                    SshConnection::connect(options()).await,
-                    Err(SshError::AuthenticationRejected)
-                ));
+            for (index, key) in [&wrong_key, &fixture.client_key].iter().enumerate() {
+                let result = SshConnection::connect(options()).await;
+                if index == 0 {
+                    assert!(matches!(result, Err(SshError::AgentNoIdentities)));
+                } else {
+                    assert!(matches!(result, Err(SshError::AuthenticationRejected)));
+                }
                 let mut add = Command::new("ssh-add");
                 clear_credential_environment(&mut add);
                 assert!(
