@@ -45,8 +45,8 @@ Unsigned; do not overwrite an existing installation without authorization.
 
 - Local: SSH library 51, store 47, desktop 119, authentication 16, local-sshd
   26; fmt/clippy clean; frontend check/lint/unit/build pass.
-- Quality CI `43039246358`: Windows x64 and Windows ARM64 compile checks pass
-  (full run continues for the other platforms).
+- Quality CI `43039246358`: Windows x64 and Windows ARM64 compile checks pass;
+  the Linux jobs were superseded by a newer docs run.
 - Release CI `43039266221`: Windows x64 and Windows ARM64 builds pass.
 
 ## Fixing the saved session
