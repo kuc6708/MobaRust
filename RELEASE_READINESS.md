@@ -1,3 +1,21 @@
+# Release readiness — MobaRust 0.1.36-rc.1 test build
+
+## Latest: Windows OpenSSH agent fallback (0.1.36-rc.1)
+
+- Commit `8ea4d05`; local tag `v0.1.36-rc.1` (not pushed); no release published.
+- Windows tries the Windows OpenSSH agent named pipe first and falls back to
+  Pageant; empty/erroring Pageant can no longer mask the OpenSSH agent.
+- 0.1.35 is not shipped: Windows clippy rejected a needless return.
+- Remaining user step: `ssh-add -l` reported no identities; load the key with
+  `ssh-add` or select the private-key path. This is session/agent state.
+- Quality CI `43062008952`: Windows x64/ARM64 checks pass.
+- Release CI `43062030973`: Windows x64/ARM64 builds pass; macOS ARM64 was
+  cancelled, so this is not an all-platform candidate.
+- Windows x64 artifact: 6,205,740 bytes, SHA-256
+  `2bef40072418fab1815861e5694345a06ae036de148304f1a588fcbe591012dd`.
+
+---
+
 # Release readiness — MobaRust 0.1.34-rc.1 test build
 
 ## Latest: SSH authentication diagnostics (0.1.34-rc.1)

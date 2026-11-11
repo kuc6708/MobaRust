@@ -1,3 +1,49 @@
+# MobaRust 0.1.36-rc.1 — Windows OpenSSH agent fallback test build
+
+**Verified, unpublished test build.** Commit `8ea4d05`; local tag
+`v0.1.36-rc.1` (not pushed); no GitHub release. The 0.1.35 artifact is not
+shipped: its Windows-only branch failed `clippy -D warnings` (needless return).
+
+## What changed
+
+- Windows agent authentication now tries the **Windows OpenSSH agent first**,
+  then Pageant. An empty or broken Pageant can no longer mask the OpenSSH agent.
+- If both fail, the error distinguishes no identities, rejected identities, and
+  unavailable/erroring agents instead of a generic agent failure.
+- This follows the observed `ssh-add -l` result: **The agent has no identities.**
+  The key must be loaded with `ssh-add` or selected as a private-key path.
+
+## Verified Windows x64 test installer
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `MobaRust-0.1.36-windows-x64.exe` | 6,205,740 | `2bef40072418fab1815861e5694345a06ae036de148304f1a588fcbe591012dd` |
+
+Preserved at `/home/shood/MobaRust-review/artifacts/release-0.1.36-rc.1/`.
+
+## Verification
+
+- SSH library 51, desktop 119; Linux fmt/clippy clean.
+- Quality CI `43062008952`: Windows x64 and Windows ARM64 checks pass (audit
+  gate remains red by design).
+- Release CI `43062030973`: Windows x64 and Windows ARM64 builds pass; the
+  macOS ARM64 job was cancelled, so this is not an all-platform candidate.
+
+## Load the key
+
+```powershell
+ssh-add -l
+ssh-add "$env:USERPROFILE\.ssh\id_ed25519"   # use the IdentityFile from your config
+ssh-add -l
+```
+
+Or edit the saved session and choose **Private key path** with
+`%USERPROFILE%\.ssh\<IdentityFile>`; encrypted keys need a vault passphrase
+credential reference. For `cc00sw03`, use the `User` value from the OpenSSH
+`Host shood-admin` block.
+
+---
+
 # MobaRust 0.1.34-rc.1 — SSH authentication diagnostics test build
 
 **Verified, unpublished test build.** Commit `e27a282`; local tag

@@ -1,4 +1,12 @@
-# Installation — MobaRust 0.1.34 / 0.1.33 / 0.1.32 test builds (unsigned)
+# Installation — MobaRust 0.1.36 / 0.1.34 / 0.1.33 / 0.1.32 test builds (unsigned)
+
+## Windows x64 Windows OpenSSH agent build (0.1.36)
+
+`MobaRust-0.1.36-windows-x64.exe` — SHA-256
+`2bef40072418fab1815861e5694345a06ae036de148304f1a588fcbe591012dd`
+(6,205,740 bytes). Unsigned; use a VM or back up first. This build prefers the
+Windows OpenSSH agent and falls back to Pageant. Load the key with `ssh-add` or
+use a private-key path; `ssh-add -l` must list the key.
 
 ## Windows x64 SSH authentication test build (0.1.34)
 
