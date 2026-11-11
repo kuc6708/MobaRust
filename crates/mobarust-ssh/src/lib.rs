@@ -2532,14 +2532,40 @@ async fn authenticate_with_agent(
 ) -> Result<client::AuthResult, SshError> {
     use russh::keys::agent::client::AgentClient;
 
-    match AgentClient::connect_pageant().await {
-        Ok(agent) => authenticate_with_agent_client(handle, username, agent).await,
-        Err(pageant_error) => {
-            match AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
+    // Prefer the Windows OpenSSH agent used by ssh.exe. Pageant is only a
+    // fallback, so an empty or broken Pageant cannot mask the OpenSSH agent.
+    let openssh = match AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
+        Ok(agent) => authenticate_with_agent_client(handle, username.clone(), agent).await,
+        Err(_) => Err(SshError::AgentUnavailable(
+            "the Windows OpenSSH agent is not reachable".into(),
+        )),
+    };
+    match openssh {
+        Ok(authentication) => return Ok(authentication),
+        Err(openssh_error) => {
+            let pageant = match AgentClient::connect_pageant().await {
                 Ok(agent) => authenticate_with_agent_client(handle, username, agent).await,
-                Err(pipe_error) => Err(SshError::AgentUnavailable(format!(
-                    "Pageant is unavailable ({pageant_error}); Windows OpenSSH agent is unavailable ({pipe_error}). Start the OpenSSH Authentication Agent service or Pageant, or choose a private key."
-                ))),
+                Err(_) => Err(SshError::AgentUnavailable(
+                    "Pageant is not reachable".into(),
+                )),
+            };
+            match pageant {
+                Ok(authentication) => Ok(authentication),
+                Err(pageant_error) => {
+                    if matches!(openssh_error, SshError::AuthenticationRejected)
+                        || matches!(pageant_error, SshError::AuthenticationRejected)
+                    {
+                        Err(SshError::AuthenticationRejected)
+                    } else if matches!(openssh_error, SshError::AgentNoIdentities)
+                        || matches!(pageant_error, SshError::AgentNoIdentities)
+                    {
+                        Err(SshError::AgentNoIdentities)
+                    } else {
+                        Err(SshError::AgentUnavailable(
+                            "neither the Windows OpenSSH agent nor Pageant provided a usable identity; start the OpenSSH Authentication Agent service or Pageant, load a key with ssh-add, or choose a private key".into(),
+                        ))
+                    }
+                }
             }
         }
     }
