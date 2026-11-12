@@ -1,14 +1,14 @@
 {
   "name": "mobarust-desktop",
   "private": true,
-  "version": "0.1.36",
+  "version": "0.1.37",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "check": "tsc -b --noEmit",
     "lint": "eslint . --max-warnings 0",
-    "test:unit": "node --experimental-strip-types test/remote-editor-security.test.mjs && node --experimental-strip-types test/macro-recording.test.mjs && node --experimental-strip-types test/terminal-session-close.test.mjs && node --experimental-strip-types test/terminal-focus.test.mjs && node --experimental-strip-types test/network-diagnostic-lifecycle.test.mjs && node --experimental-strip-types test/saved-jump-alias.test.mjs && node --experimental-strip-types test/tunnel-port.test.mjs && node --experimental-strip-types test/text-prompt.test.mjs && node --experimental-strip-types test/terminal-paste-approval.test.mjs && node --experimental-strip-types test/terminal-input-queue.test.mjs && node --experimental-strip-types test/remote-desktop-framebuffer.test.mjs && node --experimental-strip-types test/operation-history.test.mjs && node --experimental-strip-types test/host-trust.test.mjs && node --experimental-strip-types test/terminal-preferences.test.mjs && node --experimental-strip-types test/local-machine.test.mjs && node --experimental-strip-types test/shell-label.test.mjs && node --experimental-strip-types test/ssh-errors.test.mjs",
+    "test:unit": "node --experimental-strip-types test/remote-editor-security.test.mjs && node --experimental-strip-types test/macro-recording.test.mjs && node --experimental-strip-types test/terminal-session-close.test.mjs && node --experimental-strip-types test/terminal-focus.test.mjs && node --experimental-strip-types test/network-diagnostic-lifecycle.test.mjs && node --experimental-strip-types test/saved-jump-alias.test.mjs && node --experimental-strip-types test/tunnel-port.test.mjs && node --experimental-strip-types test/text-prompt.test.mjs && node --experimental-strip-types test/terminal-paste-approval.test.mjs && node --experimental-strip-types test/terminal-input-queue.test.mjs && node --experimental-strip-types test/remote-desktop-framebuffer.test.mjs && node --experimental-strip-types test/operation-history.test.mjs && node --experimental-strip-types test/host-trust.test.mjs && node --experimental-strip-types test/terminal-preferences.test.mjs && node --experimental-strip-types test/local-machine.test.mjs && node --experimental-strip-types test/shell-label.test.mjs && node --experimental-strip-types test/ssh-errors.test.mjs && node --experimental-strip-types test/terminal-size.test.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

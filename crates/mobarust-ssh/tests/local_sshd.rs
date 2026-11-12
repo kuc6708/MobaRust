@@ -870,6 +870,44 @@ fn dedicated_agent_rejects_empty_and_wrong_keys_then_authenticates() {
 }
 
 #[test]
+fn initial_pty_dimensions_match_the_requested_size() {
+    let runtime = tokio::runtime::Runtime::new().expect("create initial-size test runtime");
+    runtime.block_on(async {
+        let fixture = LocalSshd::start().expect("start local sshd fixture");
+        wait_for_port(fixture.port).await;
+        let connection = SshConnection::connect(fixture.options())
+            .await
+            .expect("connect to local sshd");
+        let shell = connection
+            .open_shell(89, 24)
+            .await
+            .expect("open SSH PTY at requested initial size");
+        let (mut reader, writer) = shell.split();
+        writer
+            .write(b"stty size; exit\n")
+            .await
+            .expect("query initial PTY size");
+
+        let mut output = Vec::new();
+        while let Some(message) = tokio::time::timeout(Duration::from_secs(5), reader.next_output())
+            .await
+            .expect("initial-size output timeout")
+        {
+            match message.expect("initial-size output error") {
+                SshOutput::Stdout(bytes) | SshOutput::Stderr(bytes) => output.extend(bytes),
+                SshOutput::ExitStatus(_) => break,
+                SshOutput::Control => {}
+            }
+        }
+        let text = String::from_utf8_lossy(&output);
+        assert!(
+            text.contains("24 89"),
+            "PTY started at the wrong size: {text:?}"
+        );
+    });
+}
+
+#[test]
 fn encrypted_keys_authenticate_and_wrong_credentials_fail_closed() {
     let runtime = tokio::runtime::Runtime::new().expect("create SSH test runtime");
     runtime.block_on(async {

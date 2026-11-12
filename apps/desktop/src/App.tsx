@@ -29,6 +29,7 @@ import { shouldConfirmTerminalPaste } from "./terminal-paste";
 import { approveTerminalPaste, prepareTerminalPaste, settleTerminalWrites, TerminalInputQueue } from "./terminal-input";
 import { sanitizeTerminalTitle } from "./terminal-title";
 import { terminalFontSizeAfterZoom } from "./terminal-zoom";
+import { clampSidebarWidth, clampTerminalSize, shouldSendTerminalResize, terminalSizeFromLayout, type TerminalSize } from "./terminal-size";
 import { focusConnectedTerminal } from "./terminal-focus";
 import { createSshAuthHandler, type SshAuthEvent } from "./ssh-authentication";
 import { parseTunnelPort } from "./tunnel-port";
@@ -292,6 +293,7 @@ type TerminalViewportProps = {
   onSearchResults: (workspaceId: string, resultIndex: number, resultCount: number) => void;
   onTitleChange: (workspaceId: string, title: string) => void;
   onBell: (workspaceId: string) => void;
+  onTerminalSize: (workspaceId: string, size: TerminalSize) => void;
 };
 
 type WorkspaceTerminal = {
@@ -323,6 +325,20 @@ type TerminalLayoutNode =
 
 type SplitPathPart = "first" | "second";
 type SplitPath = SplitPathPart[];
+
+async function waitForTerminalSize(
+  layout: () => TerminalLayoutNode,
+  sizes: ReadonlyMap<string, TerminalSize>,
+  timeoutMs = 1000,
+): Promise<TerminalSize | null> {
+  const deadline = performance.now() + timeoutMs;
+  while (true) {
+    const measured = terminalSizeFromLayout(layout(), sizes);
+    if (measured) return measured;
+    if (performance.now() >= deadline) return null;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 25));
+  }
+}
 
 function layoutTerminalIds(node: TerminalLayoutNode): string[] {
   return node.kind === "pane" ? [node.terminalId] : [...layoutTerminalIds(node.first), ...layoutTerminalIds(node.second)];
@@ -786,11 +802,12 @@ function auditProtocol(protocol: string | null | undefined): AuditProtocol | nul
     : null;
 }
 
-function TerminalViewport({ label, colorTheme, workspaceId, instanceKey, remoteSessionId, remoteProtocol, localTarget, fontSize, scrollbackLines, cursorBlink, confirmMultilinePaste, onStatusChange, onNativeTerminalId, onInput, onTerminalPaste, onTerminalReady, onTerminalDisposed, onSearchResults, onTitleChange, onBell }: TerminalViewportProps) {
+function TerminalViewport({ label, colorTheme, workspaceId, instanceKey, remoteSessionId, remoteProtocol, localTarget, fontSize, scrollbackLines, cursorBlink, confirmMultilinePaste, onStatusChange, onNativeTerminalId, onInput, onTerminalPaste, onTerminalReady, onTerminalDisposed, onSearchResults, onTitleChange, onBell, onTerminalSize }: TerminalViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalIdRef = useRef<string | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<(() => void) | null>(null);
+  const lastSentSizeRef = useRef<TerminalSize | null>(null);
   const terminalOptionsRef = useRef({ fontSize, scrollbackLines, cursorBlink, colorTheme });
   const confirmMultilinePasteRef = useRef(confirmMultilinePaste);
 
@@ -821,6 +838,7 @@ function TerminalViewport({ label, colorTheme, workspaceId, instanceKey, remoteS
     let unlistenX11: UnlistenFn | undefined;
     let hasReportedRemoteError = false;
     let terminalClosed = false;
+    lastSentSizeRef.current = null;
     const releaseListeners = () => {
       unlistenOutput?.();
       unlistenClosed?.();
@@ -838,7 +856,7 @@ function TerminalViewport({ label, colorTheme, workspaceId, instanceKey, remoteS
       cursorStyle: "bar",
       fontFamily: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
       fontSize: terminalOptionsRef.current.fontSize,
-      lineHeight: 1.35,
+      lineHeight: 1.15,
       scrollback: terminalOptionsRef.current.scrollbackLines,
       theme: terminalThemes[terminalOptionsRef.current.colorTheme],
     });
@@ -860,15 +878,25 @@ function TerminalViewport({ label, colorTheme, workspaceId, instanceKey, remoteS
     onTerminalReady(workspaceId, terminal, searchAddon);
 
     const fit = () => {
-      if (host.clientWidth > 0 && host.clientHeight > 0) fitAddon.fit();
+      // Never trust xterm's default 80x24 while the host is hidden or not laid
+      // out. Wait for real geometry, then report and propagate it.
+      if (host.clientWidth <= 0 || host.clientHeight <= 0) return;
+      fitAddon.fit();
+      const measured = clampTerminalSize(terminal.cols, terminal.rows);
+      host.dataset.terminalSize = `${measured.cols}x${measured.rows}`;
+      onTerminalSize(workspaceId, measured);
       const terminalId = terminalIdRef.current;
       if (IS_TAURI && terminalId && remoteProtocol !== "serial") {
+        if (!shouldSendTerminalResize(lastSentSizeRef.current, measured)) return;
+        lastSentSizeRef.current = measured;
         const resizeCommand = remoteProtocol === "ssh" ? "ssh_resize" : remoteProtocol === "telnet" ? "telnet_resize" : "terminal_resize";
         void invoke(resizeCommand, {
           terminalId,
-          cols: terminal.cols,
-          rows: terminal.rows,
-        }).catch(() => undefined);
+          cols: measured.cols,
+          rows: measured.rows,
+        }).catch(() => {
+          lastSentSizeRef.current = null;
+        });
       }
     };
 
@@ -1048,7 +1076,7 @@ function TerminalViewport({ label, colorTheme, workspaceId, instanceKey, remoteS
       onTerminalDisposed(workspaceId);
       terminal.dispose();
     };
-  }, [instanceKey, localTarget, onBell, onTerminalPaste, onInput, onNativeTerminalId, onSearchResults, onStatusChange, onTerminalDisposed, onTerminalReady, onTitleChange, remoteProtocol, remoteSessionId, workspaceId]);
+  }, [instanceKey, localTarget, onBell, onTerminalPaste, onInput, onNativeTerminalId, onSearchResults, onStatusChange, onTerminalDisposed, onTerminalReady, onTerminalSize, onTitleChange, remoteProtocol, remoteSessionId, workspaceId]);
 
   useEffect(() => {
     // Renaming a pane updates its input name without restarting its session.
@@ -1470,6 +1498,10 @@ function App() {
   const [terminalTabs, setTerminalTabs] = useState<WorkspaceTerminal[]>(() => [createWorkspaceTerminal()]);
   const [activeTerminalId, setActiveTerminalId] = useState("");
   const [terminalLayout, setTerminalLayout] = useState<TerminalLayoutNode>({ kind: "pane", terminalId: "" });
+  const [sidebarWidth, setSidebarWidth] = useState(247);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
+  const terminalLayoutRef = useRef(terminalLayout);
+  const terminalSizesRef = useRef(new Map<string, TerminalSize>());
   const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
   const [terminalSearchQuery, setTerminalSearchQuery] = useState("");
   const [terminalSearchCaseSensitive, setTerminalSearchCaseSensitive] = useState(false);
@@ -1649,11 +1681,40 @@ function App() {
   }, [remoteSessionId]);
 
   useEffect(() => {
+    terminalLayoutRef.current = terminalLayout;
+  }, [terminalLayout]);
+
+  useEffect(() => {
     if (!activeTerminalId && activeTerminal) setActiveTerminalId(activeTerminal.id);
     if (activeTerminal && terminalLayout.kind === "pane" && !terminalLayout.terminalId) {
       setTerminalLayout({ kind: "pane", terminalId: activeTerminal.id });
     }
   }, [activeTerminal, activeTerminalId, terminalLayout]);
+
+  const handleTerminalSize = useCallback((workspaceId: string, size: TerminalSize) => {
+    terminalSizesRef.current.set(workspaceId, size);
+  }, []);
+
+  const beginSidebarResize = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!sidebarOpen) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    setSidebarResizing(true);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    const onMove = (moveEvent: MouseEvent) => {
+      setSidebarWidth(clampSidebarWidth(startWidth + moveEvent.clientX - startX));
+    };
+    const onUp = () => {
+      setSidebarResizing(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp, { once: true });
+  }, [sidebarOpen, sidebarWidth]);
 
   const startNewTerminal = useCallback((target: LocalTerminalTarget = { type: "default" }, label?: string, terminalPreferences?: TerminalPreferences | null) => {
     const shellLabel = localShellDisplayName(target, navigator.platform);
@@ -2475,6 +2536,11 @@ function App() {
       const macroAtApproval = macroRunRef.current;
       const stillAllowed = () => !macroAtApproval || (!macroCancelRef.current && macroRunRef.current === macroAtApproval);
       if (!await confirmSessionStartup(request.startupCommand, `SSH ${request.username}@${request.host}:${request.port}`, sshSettings.reconnectEnabled && sshSettings.reconnectAttempts > 0, stillAllowed) || !stillAllowed()) return;
+      // Open the remote PTY at the geometry a new single-pane terminal will
+      // actually have. Wait briefly for the current layout to be measured
+      // instead of sending xterm's default dimensions.
+      const measured = await waitForTerminalSize(() => terminalLayoutRef.current, terminalSizesRef.current);
+      if (measured) request = { ...request, cols: measured.cols, rows: measured.rows };
       const authEvents = new Channel<SshAuthEvent>();
       // Installed before IPC; this channel also owns this session's reconnect
       // prompts. A closed request cannot deliver answers to another attempt.
@@ -4076,15 +4142,15 @@ function App() {
   const renderTerminalPane = useCallback((terminal: WorkspaceTerminal) => {
     const preferences = resolveTerminalPreferences({ fontSize: settings.appearance.fontSize, scrollbackLines: settings.terminal.scrollbackLines, cursorBlink: settings.terminal.cursorBlink }, terminal.terminalPreferences);
     const isDesktop = (terminal.remoteProtocol === "rdp" || terminal.remoteProtocol === "vnc") && terminal.remoteDesktopRequest;
-    return isDesktop ? <RemoteDesktopViewport workspaceId={terminal.id} instanceKey={terminal.instanceKey} request={terminal.remoteDesktopRequest!} onStatusChange={handleTerminalStatus} onNativeTerminalId={handleNativeTerminalId} /> : <TerminalViewport label={terminal.label} colorTheme={colorTheme} workspaceId={terminal.id} instanceKey={terminal.instanceKey} remoteSessionId={terminal.remoteSessionId} remoteProtocol={terminal.remoteProtocol} localTarget={terminal.localTarget} fontSize={terminal.terminalFontSizeOverride ?? preferences.fontSize} scrollbackLines={preferences.scrollbackLines} cursorBlink={preferences.cursorBlink} confirmMultilinePaste={settings.general.confirmMultilinePaste} onStatusChange={handleTerminalStatus} onNativeTerminalId={handleNativeTerminalId} onInput={handleTerminalInput} onTerminalPaste={handleTerminalPaste} onTerminalReady={handleTerminalReady} onTerminalDisposed={handleTerminalDisposed} onSearchResults={handleSearchResults} onTitleChange={handleTerminalTitle} onBell={handleTerminalBell} />;
-  }, [colorTheme, handleTerminalPaste, handleNativeTerminalId, handleSearchResults, handleTerminalBell, handleTerminalDisposed, handleTerminalInput, handleTerminalReady, handleTerminalStatus, handleTerminalTitle, settings.appearance.fontSize, settings.general.confirmMultilinePaste, settings.terminal.cursorBlink, settings.terminal.scrollbackLines]);
+    return isDesktop ? <RemoteDesktopViewport workspaceId={terminal.id} instanceKey={terminal.instanceKey} request={terminal.remoteDesktopRequest!} onStatusChange={handleTerminalStatus} onNativeTerminalId={handleNativeTerminalId} /> : <TerminalViewport label={terminal.label} colorTheme={colorTheme} workspaceId={terminal.id} instanceKey={terminal.instanceKey} remoteSessionId={terminal.remoteSessionId} remoteProtocol={terminal.remoteProtocol} localTarget={terminal.localTarget} fontSize={terminal.terminalFontSizeOverride ?? preferences.fontSize} scrollbackLines={preferences.scrollbackLines} cursorBlink={preferences.cursorBlink} confirmMultilinePaste={settings.general.confirmMultilinePaste} onStatusChange={handleTerminalStatus} onNativeTerminalId={handleNativeTerminalId} onInput={handleTerminalInput} onTerminalPaste={handleTerminalPaste} onTerminalReady={handleTerminalReady} onTerminalDisposed={handleTerminalDisposed} onSearchResults={handleSearchResults} onTitleChange={handleTerminalTitle} onBell={handleTerminalBell} onTerminalSize={handleTerminalSize} />;
+  }, [colorTheme, handleTerminalPaste, handleNativeTerminalId, handleSearchResults, handleTerminalBell, handleTerminalDisposed, handleTerminalInput, handleTerminalReady, handleTerminalStatus, handleTerminalSize, handleTerminalTitle, settings.appearance.fontSize, settings.general.confirmMultilinePaste, settings.terminal.cursorBlink, settings.terminal.scrollbackLines]);
 
   if (closing) return <main className={`app-shell shutdown-state theme-${colorTheme}`}><section role="status" aria-live="polite"><LoaderCircle className="spin" size={24} aria-hidden="true" /><h1>Closing MobaRust</h1><p>Closing local terminals and finishing SSH file cleanup before exiting.</p></section></main>;
 
   return (
-    <main className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"} theme-${colorTheme}`}>
+    <main className={`app-shell ${sidebarOpen ? "" : "sidebar-collapsed"} ${activeView === "terminal" ? "terminal-view" : ""} theme-${colorTheme}`}>
       <header className="topbar">
-        <div className="brand-lockup">
+        <div className="brand-lockup" style={{ width: sidebarOpen ? sidebarWidth : 247 }}>
           <div className="brand-mark" aria-hidden="true">
             <svg className="brand-symbol" viewBox="0 0 32 32">
               <path className="brand-glyph" d="M5.5 27V7.5H10L16 13.5L22 7.5H26.5V27H21.5V13L16 18.5L10.5 13V27H5.5Z" />
@@ -4123,7 +4189,7 @@ function App() {
       </header>
 
       <div className="app-body">
-        <aside className="sidebar">
+        <aside className="sidebar" style={{ flexBasis: sidebarOpen ? sidebarWidth : 0, transition: sidebarResizing ? "none" : undefined }}>
           <div className="sidebar-toolbar">
             <button className="sidebar-toggle" onClick={() => setSidebarOpen(false)} aria-label="Collapse sidebar">
               <PanelLeftClose size={16} />
@@ -4197,6 +4263,7 @@ function App() {
             <button className={`nav-item ${activeView === "transfers" ? "active" : ""}`} onClick={() => setActiveView("transfers")}><ArrowDownToLine size={15} /> Transfers <span className="nav-count">{activeTransferCount}</span></button>
             <button className={`nav-item ${activeView === "audit" ? "active" : ""}`} onClick={() => setActiveView("audit")}><History size={15} /> Audit history <span className="nav-count">{auditEvents.length}</span></button>
           </div>
+          {sidebarOpen && <div className="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" title="Drag to resize sidebar" onMouseDown={beginSidebarResize} />}
         </aside>
 
         <section className="workspace">
