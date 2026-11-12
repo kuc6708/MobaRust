@@ -1,4 +1,13 @@
-# Installation — MobaRust 0.1.36 / 0.1.34 / 0.1.33 / 0.1.32 test builds (unsigned)
+# Installation — MobaRust 0.1.37 / 0.1.36 / 0.1.34 / 0.1.33 / 0.1.32 test builds (unsigned)
+
+## Windows x64 SSH PTY sizing build (0.1.37)
+
+`MobaRust-0.1.37-windows-x64.exe` — SHA-256
+`c64ed054d14b78632294dbdb3b1edf4036fcc980ce42f8dcc97141705cf3a2db`
+(6,205,792 bytes). Unsigned; use a VM or back up first. The Terminal view now
+hides decorative chrome, hides the right rail at ≤1280px, supports a draggable
+sidebar, and opens the SSH PTY at the measured viewport instead of 120x32. At
+1024x768 the measured terminal is 96x28, meeting a remote 80x24 minimum.
 
 ## Windows x64 Windows OpenSSH agent build (0.1.36)
 

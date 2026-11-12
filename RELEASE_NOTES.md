@@ -1,3 +1,55 @@
+# MobaRust 0.1.37-rc.1 — SSH PTY sizing test build
+
+**Verified, unpublished test build.** Commit `c1d494a`; local tag
+`v0.1.37-rc.1` (not pushed); no GitHub release.
+
+## Root cause
+
+The SSH backend opened the PTY with a hardcoded `120x32` before the xterm
+existed. Once the terminal attached, the frontend resized it to the actual
+pane (for example `74x20`). Remote applications that require `80x24` rejected
+that resize. The terminal view also reserved space for the workspace heading,
+context strip, right rail, lower cards and footer.
+
+## Fixes
+
+- Measure the real terminal geometry before `ssh_connect`; wait briefly for a
+  valid measurement. The initial PTY now matches the rendered viewport.
+- Combine split-pane geometry when a saved SSH profile will replace the split
+  with one pane. Never send geometry while the host is hidden, and collapse
+  duplicate resize calls.
+- Add a terminal-focused responsive layout: the decorative heading, context
+  strip, lower cards and footer are hidden in the Terminal view; the right rail
+  is hidden at widths up to 1280px. Add a draggable sidebar resizer.
+- Tighten xterm line height while keeping the 13px font. Measured viewports:
+  `96x28` at 1024x768, `96x24` at 1024x700, `103x26` at 1152x720,
+  `115x30` at 1280x800, `101x36` at 1440x900.
+- No `80x24` geometry is invented for a smaller viewport; the layout makes the
+  actual viewport meet common remote minimums.
+- Strict host-key verification and authentication behavior are unchanged.
+
+## Verified Windows x64 test installer
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `MobaRust-0.1.37-windows-x64.exe` | 6,205,792 | `c64ed054d14b78632294dbdb3b1edf4036fcc980ce42f8dcc97141705cf3a2db` |
+
+Preserved at `/home/shood/MobaRust-review/artifacts/release-0.1.37-rc.1/`.
+Unsigned; do not overwrite an existing installation without authorization.
+
+## Verification
+
+- Local: SSH library 51, store 47, desktop 119, authentication 16, local-sshd
+  27 (including a new initial-PTY `stty size` assertion); fmt/clippy clean;
+  frontend check/lint/unit/build pass.
+- Quality CI `43260630822`: Windows x64 and ARM64 checks pass.
+- Release CI `43260655354`: Windows x64/ARM64, Linux and macOS x64 builds pass;
+  macOS ARM64 was cancelled, so this is not an all-platform candidate.
+- Headless browser layout measurements at 1024–1440px widths confirm the
+  actual xterm geometry above.
+
+---
+
 # MobaRust 0.1.36-rc.1 — Windows OpenSSH agent fallback test build
 
 **Verified, unpublished test build.** Commit `8ea4d05`; local tag

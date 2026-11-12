@@ -1,3 +1,25 @@
+# Release readiness — MobaRust 0.1.37-rc.1 test build
+
+## Latest: SSH PTY sizing (0.1.37-rc.1)
+
+- Commit `c1d494a`; local tag `v0.1.37-rc.1` (not pushed); no release published.
+- Root cause: the shell opened at the hardcoded `120x32` before xterm measured,
+  then shrank to the actual `74x20`; remote apps requiring `80x24` rejected it.
+- Fixes: measured initial PTY geometry (split-aware, valid-only), hidden-host
+  resize suppression, resize dedupe, terminal-focused responsive layout,
+  draggable sidebar, and tighter line height. No fake `80x24` geometry.
+- Measured actual viewports: 96x28 at 1024x768, 96x24 at 1024x700, 103x26 at
+  1152x720, 115x30 at 1280x800, 101x36 at 1440x900.
+- Tests: SSH 51, store 47, desktop 119, authentication 16, local-sshd 27
+  (initial PTY `stty size` included); frontend checks pass.
+- Quality CI `43260630822`: Windows x64/ARM64 checks pass.
+- Release CI `43260655354`: Windows x64/ARM64 and Linux/macOS x64 build;
+  macOS ARM64 was cancelled.
+- Windows x64 artifact: 6,205,792 bytes, SHA-256
+  `c64ed054d14b78632294dbdb3b1edf4036fcc980ce42f8dcc97141705cf3a2db`.
+
+---
+
 # Release readiness — MobaRust 0.1.36-rc.1 test build
 
 ## Latest: Windows OpenSSH agent fallback (0.1.36-rc.1)
