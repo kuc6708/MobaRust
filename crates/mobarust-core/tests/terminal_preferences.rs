@@ -6,7 +6,10 @@ fn preferences(
     cursor_blink: bool,
 ) -> SessionTerminalPreferences {
     SessionTerminalPreferences {
+        font_family: Some("Consolas, monospace".into()),
         font_size,
+        letter_spacing: Some(5),
+        line_height: Some(120),
         scrollback_lines,
         cursor_blink,
     }
@@ -31,6 +34,44 @@ fn bounds_accept_only_supported_ranges() {
             "font={font_size} scrollback={scrollback_lines} must be rejected"
         );
     }
+
+    for mutate in [
+        |preferences: &mut SessionTerminalPreferences| {
+            preferences.font_family = Some("bad;font".into())
+        },
+        |preferences: &mut SessionTerminalPreferences| preferences.letter_spacing = Some(51),
+        |preferences: &mut SessionTerminalPreferences| preferences.line_height = Some(99),
+        |preferences: &mut SessionTerminalPreferences| preferences.line_height = Some(201),
+    ] {
+        let mut session = SessionRecord::local_terminal("preferences");
+        let mut invalid = preferences(13, 5_000, true);
+        mutate(&mut invalid);
+        session.terminal_preferences = Some(invalid);
+        assert_eq!(
+            session.validate(),
+            Err(SessionValidationError::InvalidTerminalPreferences)
+        );
+    }
+}
+
+#[test]
+fn legacy_preferences_without_typography_fields_load_with_inherited_defaults() {
+    let mut session = SessionRecord::local_terminal("preferences");
+    session.terminal_preferences = Some(preferences(13, 5_000, true));
+    let mut value = serde_json::to_value(&session).expect("serialize session");
+    let preferences = value["terminal_preferences"]
+        .as_object_mut()
+        .expect("preferences object");
+    preferences.remove("fontFamily");
+    preferences.remove("letterSpacing");
+    preferences.remove("lineHeight");
+
+    let restored: SessionRecord =
+        serde_json::from_value(value).expect("legacy preferences must load");
+    let restored = restored.terminal_preferences.expect("preferences");
+    assert_eq!(restored.font_family, None);
+    assert_eq!(restored.letter_spacing, None);
+    assert_eq!(restored.line_height, None);
 }
 
 #[test]
@@ -39,7 +80,13 @@ fn serde_uses_camel_case_and_is_optional() {
     session.terminal_preferences = Some(preferences(20, 10_000, false));
 
     let value = serde_json::to_value(&session).expect("serialize session");
+    assert_eq!(
+        value["terminal_preferences"]["fontFamily"],
+        "Consolas, monospace"
+    );
     assert_eq!(value["terminal_preferences"]["fontSize"], 20);
+    assert_eq!(value["terminal_preferences"]["letterSpacing"], 5);
+    assert_eq!(value["terminal_preferences"]["lineHeight"], 120);
     assert_eq!(value["terminal_preferences"]["scrollbackLines"], 10_000);
     assert_eq!(value["terminal_preferences"]["cursorBlink"], false);
 

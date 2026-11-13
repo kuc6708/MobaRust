@@ -3,7 +3,10 @@ use mobarust_store::{SessionStore, StoreError};
 
 fn preferences() -> SessionTerminalPreferences {
     SessionTerminalPreferences {
+        font_family: Some("Cascadia Mono, Consolas, monospace".into()),
         font_size: 20,
+        letter_spacing: Some(6),
+        line_height: Some(125),
         scrollback_lines: 10_000,
         cursor_blink: false,
     }
@@ -45,7 +48,10 @@ fn export_is_camel_case_and_import_preserves_preferences() {
 
     let json = store.export_json().expect("export sessions");
     assert!(json.contains("\"terminal_preferences\""));
+    assert!(json.contains("\"fontFamily\""));
     assert!(json.contains("\"fontSize\""));
+    assert!(json.contains("\"letterSpacing\""));
+    assert!(json.contains("\"lineHeight\""));
     assert!(json.contains("\"scrollbackLines\""));
     assert!(json.contains("\"cursorBlink\""));
 

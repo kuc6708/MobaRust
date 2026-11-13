@@ -281,7 +281,13 @@ pub struct JumpHostRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionTerminalPreferences {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
     pub font_size: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub letter_spacing: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<u16>,
     pub scrollback_lines: u32,
     pub cursor_blink: bool,
 }
@@ -450,7 +456,17 @@ impl SessionRecord {
             .terminal_preferences
             .as_ref()
             .is_some_and(|preferences| {
-                !(8..=32).contains(&preferences.font_size)
+                preferences
+                    .font_family
+                    .as_ref()
+                    .is_some_and(|family| !crate::settings::is_valid_font_family(family))
+                    || !(8..=32).contains(&preferences.font_size)
+                    || preferences
+                        .letter_spacing
+                        .is_some_and(|spacing| spacing > 50)
+                    || preferences
+                        .line_height
+                        .is_some_and(|height| !(100..=200).contains(&height))
                     || !(100..=100_000).contains(&preferences.scrollback_lines)
             })
         {

@@ -2018,7 +2018,10 @@ mod tests {
         let path = directory.path().join("settings.json");
         let mut store = SettingsStore::open(&path).unwrap();
         let mut settings = AppSettings::default();
+        settings.appearance.font_family = "Consolas, monospace".into();
         settings.appearance.font_size = 18;
+        settings.appearance.letter_spacing = 7;
+        settings.appearance.line_height = 130;
         settings.general.confirm_multiline_paste = false;
         store.save(settings.clone()).unwrap();
         assert_private_file_permissions(&path);
@@ -2068,17 +2071,46 @@ mod tests {
     }
 
     #[test]
+    fn legacy_settings_without_typography_inherit_safe_defaults() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        fs::write(
+            &path,
+            br#"{"schema_version":1,"settings":{"appearance":{"fontSize":14}}}"#,
+        )
+        .unwrap();
+
+        let settings = SettingsStore::open(&path).unwrap();
+        assert_eq!(settings.get().appearance.font_size, 14);
+        assert!(
+            settings
+                .get()
+                .appearance
+                .font_family
+                .contains("Cascadia Mono")
+        );
+        assert_eq!(settings.get().appearance.letter_spacing, 5);
+        assert_eq!(settings.get().appearance.line_height, 120);
+    }
+
+    #[test]
     fn settings_export_import_is_secret_free_and_rejects_invalid_payloads() {
         let directory = tempdir().unwrap();
         let source_path = directory.path().join("source-settings.json");
         let target_path = directory.path().join("target-settings.json");
         let mut source = SettingsStore::open(&source_path).unwrap();
         let mut settings = AppSettings::default();
+        settings.appearance.font_family = "Cascadia Mono, Consolas, monospace".into();
         settings.appearance.font_size = 19;
+        settings.appearance.letter_spacing = 6;
+        settings.appearance.line_height = 125;
         settings.network.scan_concurrency = 8;
         source.save(settings.clone()).unwrap();
 
         let json = source.export_json().unwrap();
+        assert!(json.contains("fontFamily"));
+        assert!(json.contains("letterSpacing"));
+        assert!(json.contains("lineHeight"));
         assert!(json.contains("scanConcurrency"));
         assert!(!json.contains("password"));
         assert!(!json.contains("credential"));

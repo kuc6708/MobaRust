@@ -33,16 +33,38 @@ impl Default for GeneralSettings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AppearanceSettings {
+    #[serde(default = "default_font_family")]
+    pub font_family: String,
     #[serde(default = "default_font_size")]
     pub font_size: u16,
+    /// Tenths of a pixel, so the persisted settings stay exact and Eq.
+    #[serde(default = "default_letter_spacing")]
+    pub letter_spacing: u16,
+    /// Percentage of the font size (120 = 1.20).
+    #[serde(default = "default_line_height")]
+    pub line_height: u16,
 }
 
 impl Default for AppearanceSettings {
     fn default() -> Self {
         Self {
+            font_family: default_font_family(),
             font_size: default_font_size(),
+            letter_spacing: default_letter_spacing(),
+            line_height: default_line_height(),
         }
     }
+}
+
+/// A CSS font-family list. Reject characters that could escape the font
+/// declaration while allowing quoted names, commas, spaces and Unicode.
+pub(crate) fn is_valid_font_family(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.len() <= 200
+        && !value.chars().any(|character| {
+            character.is_control() || matches!(character, ';' | '{' | '}' | '(' | ')' | '\\')
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,8 +194,14 @@ pub struct AppSettings {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SettingsValidationError {
+    #[error("terminal font family is invalid")]
+    InvalidFontFamily,
     #[error("terminal font size must be between 8 and 32")]
     InvalidFontSize,
+    #[error("terminal letter spacing must be between 0 and 5 pixels")]
+    InvalidLetterSpacing,
+    #[error("terminal line height must be between 1.00 and 2.00")]
+    InvalidLineHeight,
     #[error("terminal scrollback must be between 100 and 100000 lines")]
     InvalidScrollback,
     #[error("SSH reconnect attempts must be between 0 and 10")]
@@ -192,8 +220,17 @@ pub enum SettingsValidationError {
 
 impl AppSettings {
     pub fn validate(&self) -> Result<(), SettingsValidationError> {
+        if !is_valid_font_family(&self.appearance.font_family) {
+            return Err(SettingsValidationError::InvalidFontFamily);
+        }
         if !(8..=32).contains(&self.appearance.font_size) {
             return Err(SettingsValidationError::InvalidFontSize);
+        }
+        if self.appearance.letter_spacing > 50 {
+            return Err(SettingsValidationError::InvalidLetterSpacing);
+        }
+        if !(100..=200).contains(&self.appearance.line_height) {
+            return Err(SettingsValidationError::InvalidLineHeight);
         }
         if !(100..=100_000).contains(&self.terminal.scrollback_lines) {
             return Err(SettingsValidationError::InvalidScrollback);
@@ -242,8 +279,20 @@ fn default_true() -> bool {
     true
 }
 
+fn default_font_family() -> String {
+    r#""Cascadia Mono", "Cascadia Code", Consolas, "SFMono-Regular", "JetBrains Mono", "Courier New", monospace"#.into()
+}
+
 fn default_font_size() -> u16 {
     13
+}
+
+fn default_letter_spacing() -> u16 {
+    5
+}
+
+fn default_line_height() -> u16 {
+    120
 }
 
 fn default_scrollback() -> u32 {
@@ -376,8 +425,74 @@ mod tests {
         let settings = AppSettings::default();
         settings.validate().unwrap();
         assert!(settings.general.confirm_multiline_paste);
+        assert!(settings.appearance.font_family.contains("Cascadia Mono"));
+        assert_eq!(settings.appearance.font_size, 13);
+        assert_eq!(settings.appearance.letter_spacing, 5);
+        assert_eq!(settings.appearance.line_height, 120);
         assert_eq!(settings.terminal.scrollback_lines, 5_000);
         assert_eq!(settings.keyboard.command_palette, "Mod+Shift+P");
+    }
+
+    #[test]
+    fn typography_ranges_and_font_family_are_validated() {
+        let mut settings = AppSettings::default();
+        settings.appearance.font_family = "Cascadia Mono; color:red".into();
+        assert_eq!(
+            settings.validate(),
+            Err(SettingsValidationError::InvalidFontFamily)
+        );
+        settings = AppSettings::default();
+        settings.appearance.font_family = "  ".into();
+        assert_eq!(
+            settings.validate(),
+            Err(SettingsValidationError::InvalidFontFamily)
+        );
+        settings = AppSettings::default();
+        settings.appearance.letter_spacing = 51;
+        assert_eq!(
+            settings.validate(),
+            Err(SettingsValidationError::InvalidLetterSpacing)
+        );
+        settings = AppSettings::default();
+        settings.appearance.line_height = 99;
+        assert_eq!(
+            settings.validate(),
+            Err(SettingsValidationError::InvalidLineHeight)
+        );
+        settings = AppSettings::default();
+        settings.appearance.line_height = 201;
+        assert_eq!(
+            settings.validate(),
+            Err(SettingsValidationError::InvalidLineHeight)
+        );
+        settings = AppSettings::default();
+        settings.appearance.font_family = r#""Noto Sans Mono", "等宽", monospace"#.into();
+        settings.appearance.letter_spacing = 50;
+        settings.appearance.line_height = 200;
+        settings.validate().unwrap();
+    }
+
+    #[test]
+    fn typography_round_trips_and_legacy_settings_inherit_defaults() {
+        let mut settings = AppSettings::default();
+        settings.appearance.font_family = "Consolas, monospace".into();
+        settings.appearance.font_size = 16;
+        settings.appearance.letter_spacing = 8;
+        settings.appearance.line_height = 135;
+        settings.validate().unwrap();
+        let value = serde_json::to_value(&settings).expect("serialize settings");
+        assert_eq!(value["appearance"]["fontFamily"], "Consolas, monospace");
+        assert_eq!(value["appearance"]["letterSpacing"], 8);
+        assert_eq!(value["appearance"]["lineHeight"], 135);
+        let restored: AppSettings = serde_json::from_value(value).expect("deserialize settings");
+        assert_eq!(restored, settings);
+
+        let legacy: AppSettings = serde_json::from_str(r#"{"appearance":{"fontSize":14}}"#)
+            .expect("legacy appearance must load");
+        assert_eq!(legacy.appearance.font_size, 14);
+        assert!(legacy.appearance.font_family.contains("Cascadia Mono"));
+        assert_eq!(legacy.appearance.letter_spacing, 5);
+        assert_eq!(legacy.appearance.line_height, 120);
     }
 
     #[test]
