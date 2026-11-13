@@ -1,3 +1,51 @@
+# MobaRust 0.1.38-rc.1 — terminal typography test build
+
+**Verified, unpublished test build.** Commit `431e0e0`; local tag
+`v0.1.38-rc.1` (not pushed); no GitHub release.
+
+## Typography
+
+- Global and per-session settings for **font family, font size, letter spacing
+  and line height**. Font weights are explicit 400/700.
+- Windows default font stack: **Cascadia Mono, Cascadia Code, Consolas**,
+  SFMono/JetBrains/Courier fallback, `monospace`; 13px, 0.5px letter spacing,
+  1.20 line height.
+- Text sizes, line height and letter spacing use exact persisted units
+  (tenths of a pixel / percent) and are validated in Rust and TypeScript.
+- Older settings and sessions inherit the new defaults; per-session profiles
+  can override only selected typography fields.
+- FitAddon refits after font changes, window resize, sidebar collapse/drag,
+  split/tab changes, system font loading and DPI changes. A low-frequency
+  host/DPR watchdog covers webview resize events that are not delivered.
+- The collapsed sidebar now truly releases its flex width; previously it still
+  reserved 247px because of automatic flex min-width.
+
+## Verification
+
+- Measured terminal geometry at 1024x700: **87x24** (100% DPI), **89x25**
+  (125%), **90x24** (150%). At 1024x768: **87x28**, **89x29**, **90x28**.
+- Live typography change: 87x24 → 59x13 after 20px/1.2px/1.45; the PTY resized
+  through FitAddon. Sidebar collapse: 115x24. Window resize: 121x28. Split
+  panes: two independent 41x24 terminals.
+- Settings persistence serde/store tests, per-session inheritance tests,
+  frontend parse/range tests, and the existing SSH/PTY resize tests pass.
+- Local: SSH 51, store 48, desktop 119, core 32, authentication 16,
+  local-sshd 27 (initial PTY included); fmt/clippy clean; frontend
+  check/lint/unit/build pass.
+- Quality CI `43447357471`: Windows x64/ARM64 checks pass (audit gate remains
+  red by design). Release CI `43447379132`: Windows x64/ARM64 builds pass.
+
+## Verified Windows x64 test installer
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `MobaRust-0.1.38-windows-x64.exe` | 6,204,030 | `ae92ac16684322843bfa2843b6b6ee82e19037d21e71f8545f30fbca9425f809` |
+
+Preserved at `/home/shood/MobaRust-review/artifacts/release-0.1.38-rc.1/`.
+Unsigned; use a VM or back up first.
+
+---
+
 # MobaRust 0.1.37-rc.1 — SSH PTY sizing test build
 
 **Verified, unpublished test build.** Commit `c1d494a`; local tag

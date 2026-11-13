@@ -1,3 +1,26 @@
+# Release readiness — MobaRust 0.1.38-rc.1 test build
+
+## Latest: terminal typography (0.1.38-rc.1)
+
+- Commit `431e0e0`; local tag `v0.1.38-rc.1` (not pushed); no release published.
+- Global/per-session font family, size, letter spacing and line height; Windows
+  Cascadia Mono/Consolas stack, 13px, 0.5px letter spacing, 1.20 line height;
+  explicit 400/700 weights.
+- FitAddon refits after font/window/sidebar/split/tab/font-load/DPI changes;
+  collapse now releases the sidebar flex width; host/DPR watchdog for missed
+  webview resize events.
+- Measured: 1024x700 = 87x24, 89x25, 90x24 at 100/125/150% DPI; 1024x768 =
+  87x28, 89x29, 90x28. Live font change, sidebar collapse, window resize and
+  split panes were observed to refit.
+- Tests: SSH 51, store 48, desktop 119, core 32, authentication 16,
+  local-sshd 27; frontend checks pass.
+- Quality CI `43447357471`: Windows x64/ARM64 checks pass.
+- Release CI `43447379132`: Windows x64/ARM64 builds pass.
+- Windows x64 artifact: 6,204,030 bytes, SHA-256
+  `ae92ac16684322843bfa2843b6b6ee82e19037d21e71f8545f30fbca9425f809`.
+
+---
+
 # Release readiness — MobaRust 0.1.37-rc.1 test build
 
 ## Latest: SSH PTY sizing (0.1.37-rc.1)

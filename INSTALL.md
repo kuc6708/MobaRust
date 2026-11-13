@@ -1,4 +1,14 @@
-# Installation — MobaRust 0.1.37 / 0.1.36 / 0.1.34 / 0.1.33 / 0.1.32 test builds (unsigned)
+# Installation — MobaRust 0.1.38 / 0.1.37 / 0.1.36 / 0.1.34 / 0.1.33 / 0.1.32 test builds (unsigned)
+
+## Windows x64 terminal typography build (0.1.38)
+
+`MobaRust-0.1.38-windows-x64.exe` — SHA-256
+`ae92ac16684322843bfa2843b6b6ee82e19037d21e71f8545f30fbca9425f809`
+(6,204,030 bytes). Unsigned; use a VM or back up first. Defaults to Cascadia
+Mono/Consolas at 13px, 0.5px letter spacing and 1.20 line height. Configure
+font family, size, letter spacing and line height globally in Settings or per
+saved session. Measured 87x24 at 1024x700 at 100% scaling and 89x25/90x24 at
+125/150%.
 
 ## Windows x64 SSH PTY sizing build (0.1.37)
 
